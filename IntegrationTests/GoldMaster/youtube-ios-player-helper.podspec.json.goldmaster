@@ -144,7 +144,6 @@ objc_library(
     ]
   ),
   deps = [
-    ":youtube-ios-player-helper_Bundle_Assets",
     ":youtube-ios-player-helper_cxx_includes"
   ],
   copts = select(
@@ -198,9 +197,7 @@ swift_library(
       )
     }
   ),
-  deps = [
-    ":youtube-ios-player-helper_Bundle_Assets"
-  ],
+  deps = [],
   data = []
 )
 filegroup(
@@ -315,7 +312,6 @@ objc_library(
     ]
   ),
   deps = [
-    ":youtube-ios-player-helper_Bundle_Assets",
     ":youtube-ios-player-helper_cxx",
     ":youtube-ios-player-helper_swift",
     ":youtube-ios-player-helper_includes"
