@@ -121,12 +121,16 @@ public class Glob: Collection {
 
         var results = [String]()
         var parts = pattern.components(separatedBy: "**")
-        let firstPart = parts.removeFirst()
+        var firstPart = parts.removeFirst()
         var lastPart = parts.joined(separator: "**")
 
         let fileManager = FileManager.default
 
         var directories: [String]
+
+        if firstPart.isEmpty {
+            firstPart = "."
+        }
 
         do {
             directories = try fileManager.subpathsOfDirectory(atPath: firstPart).compactMap { subpath in
@@ -497,6 +501,20 @@ public func pattern(fromPattern pattern: String, includingFileTypes fileTypes: S
 // @note the original PodSpec globs are based on the ruby glob semantics
 public func podGlob(pattern: String) -> [String] {
     return Glob(pattern: pattern, behavior: GlobBehaviorBashV4).paths
+}
+
+public func podGlobSet(patternSet: AttrSet<Set<String>>) -> Set<String> {
+    return patternSet.fold(basic: { (patterns: Set<String>?) -> Set<String> in
+        return Set(patterns.map {
+            $0.flatMap(podGlob)
+        } ?? [])
+    }, multi: { (set: Set<String>, multi: MultiPlatform<Set<String>>) -> Set<String> in
+        let inner: Set<String>? = multi |>
+                MultiPlatform<Set<String>>.lens.viewAll {
+                    Set($0.flatMap(podGlob))
+                }
+        return set.union(inner.denormalize())
+    })
 }
 
 // MARK: - NSRegularExpression

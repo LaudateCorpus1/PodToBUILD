@@ -224,11 +224,11 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
     /// to split C++ and ObjC apart.
     /// TODO: Add bazel-discuss thread on this matter.
     /// isSplitDep indicates if the library is a split language dependency
-    init(rootSpec: PodSpec? = nil, spec: PodSpec, extraDeps: [String] = [],
+    init(parentSpecs: [PodSpec] = [], spec: PodSpec, extraDeps: [String] = [],
             isSplitDep: Bool = false,
             sourceType: BazelSourceLibType = .objc) {
-        let fallbackSpec: ComposedSpec = ComposedSpec.create(fromSpecs: [rootSpec, spec].compactMap { $0 })
-        self.isTopLevelTarget = rootSpec == nil && isSplitDep == false
+        let fallbackSpec: ComposedSpec = ComposedSpec.create(fromSpecs: parentSpecs + [spec])
+        self.isTopLevelTarget = parentSpecs.isEmpty && isSplitDep == false
         let allSourceFiles = spec ^* liftToAttr(PodSpec.lens.sourceFiles)
 
         let includeFileTypes = sourceType == .cpp ? CppLikeFileTypes :
@@ -248,9 +248,9 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
         self.publicHeaders = (fallbackSpec ^* ComposedSpec.lens.fallback(liftToAttr(PodSpec.lens.publicHeaders))).map{ Set($0) }
     
         let podName = GetBuildOptions().podName
-        self.name = computeLibName(rootSpec: rootSpec, spec: spec, podName:
+        self.name = computeLibName(parentSpecs: parentSpecs, spec: spec, podName:
                 podName, isSplitDep: isSplitDep, sourceType: sourceType)
-        let externalName = rootSpec?.name ?? spec.name
+        let externalName = parentSpecs.first?.name ?? spec.name
 
         let xcconfigTransformer =
             XCConfigTransformer.defaultTransformer(externalName: externalName,
@@ -463,12 +463,22 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
                 return target is ObjcLibrary
             }.map { ($0 + "_hdrs").toSkylark() }
         }
-       
-        let podSupportHeaders = GlobNode(include: AttrSet<Set<String>>(basic: [PodSupportSystemPublicHeaderDir + "**/*"]),
-                                                         exclude: AttrSet<Set<String>>.empty).toSkylark()
+
+        let podSupportHeadersGlob = Set([PodSupportSystemPublicHeaderDir + "**/*"])
+        let podSupportHeaders = GlobNode(
+                include: AttrSet<Set<String>>(basic: podSupportHeadersGlob),
+                exclude: AttrSet<Set<String>>.empty
+        ).toSkylark()
+
+        let headerExcludesBasic = (headers.exclude.basic ?? Set()).union(podSupportHeadersGlob)
+        let headersWithoutPodSupport = GlobNode(
+                include: headers.include,
+                exclude: AttrSet(basic: headerExcludesBasic)
+        )
+
         if lib.isTopLevelTarget {
             var exposedHeaders: SkylarkNode = podSupportHeaders .+.
-                headers.toSkylark() .+. depHdrs.toSkylark()
+                headersWithoutPodSupport.toSkylark() .+. depHdrs.toSkylark()
             inlineSkylark.append(.functionCall(
                 name: "filegroup",
                 arguments: [
@@ -518,22 +528,31 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
 
         let headerGlobNode = headers
 
-        let moduleMapDirectoryName = externalName + "_module_map"
-        let clangModuleName = headerName.basic?.replacingOccurrences(of: "-", with: "_")
-        if lib.isTopLevelTarget {
-            inlineSkylark.append(.functionCall(
+        let moduleMapDirectoryName = name + "_module_map"
+        let clangModuleNameUnclean = lib.isTopLevelTarget ? headerName.basic : moduleName + "_" + name
+        let clangModuleName = clangModuleNameUnclean?.replacingOccurrences(of: "-", with: "_")
+        let moduleMapHeadersTarget = name + "_module_map_hdrs"
+        inlineSkylark.append(.functionCall(
+                name: "filegroup",
+                arguments: [
+                    .named(name: "name", value: moduleMapHeadersTarget.toSkylark()),
+                    .named(name: "srcs", value: podGlobSet(patternSet: publicHeaders).toSkylark()),
+                    .named(name: "visibility", value: ["//visibility:public"].toSkylark()),
+                ]
+        ))
+        inlineSkylark.append(.functionCall(
                 name: "gen_module_map",
                 arguments: [
                     .basic(moduleName.toSkylark()),
                     .basic(moduleMapDirectoryName.toSkylark()),
                     .basic(clangModuleName.toSkylark()),
-                    .basic([externalName + "_hdrs"].toSkylark())
+                    .basic([moduleMapHeadersTarget].toSkylark()),
                 ]
-                ))
-             if lib.externalName != lib.name {
-                 inlineSkylark.append(makeAlias(name: lib.externalName, actual:
-                             lib.name))
-             }
+        ))
+        if lib.isTopLevelTarget {
+            if lib.externalName != lib.name {
+                inlineSkylark.append(makeAlias(name: lib.externalName, actual: lib.name))
+            }
         }
         
         if !lib.sourceFiles.include.isEmpty {
@@ -600,6 +619,10 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
                libArguments.append(.named(
                     name: "includes",
                     value: [ moduleMapDirectoryName ].toSkylark()
+               ))
+               libArguments.append(.named(
+                       name: "module_map",
+                       value: (":" + moduleMapDirectoryName + "_module_map_file").toSkylark()
                ))
           }
 
@@ -676,10 +699,11 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
             }
         }
 
+        let modulesCopt = enableModules ? ["-fmodules"] : []
         libArguments.append(.named(
             name: "copts",
             value: (lib.copts.toSkylark() .+. buildConfigDependenctCOpts .+. getPodIQuotes().toSkylark()
-                ) <> ["-fmodule-name=" + moduleName + "_pod_module"].toSkylark()))
+                ) <> (["-fmodule-name=" + moduleName + "_pod_module"] + modulesCopt).toSkylark()))
 
 
         if !lib.bundles.isEmpty || !lib.resources.isEmpty {
