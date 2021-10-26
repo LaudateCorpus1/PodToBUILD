@@ -26,15 +26,11 @@ public struct Lockfile {
     var cocoapods: String = ""
 
     public init(data: Data) throws {
-        let loadedDictionary = try Yams.load(yaml: String(data: data, encoding:
-            .utf8)!) as! [String: Any]
-        guard let cocoapodsval = loadedDictionary["COCOAPODS"] as? String else {
-            fatalError("Invalid lockfile")
-        }
+        let loadedDictionary = try Yams.load(yaml: String(data: data, encoding: .utf8)!) as! [String: Any]
+        guard let cocoapodsval = loadedDictionary["COCOAPODS"] as? String else { fatalError("Invalid lockfile") }
         cocoapods = cocoapodsval
         specRepos = loadedDictionary["SPEC REPOS"] as? [String: [String]] ?? [:]
-        externalSources = loadedDictionary["EXTERNAL SOURCES"] as? [String:
-            [String: String]] ?? [:]
+        externalSources = loadedDictionary["EXTERNAL SOURCES"] as? [String: [String: String]] ?? [:]
         dependencies = loadedDictionary["DEPENDENCIES"] as? [String] ?? []
         specChecksums = loadedDictionary["SPEC CHECKSUMS"] as? [String: String] ?? [:]
         podfileChecksum = loadedDictionary["PODFILE CHECKSUM"] as? String ?? ""

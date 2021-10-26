@@ -6,7 +6,7 @@
 //  Copyright © 2018 Pinterest Inc. All rights reserved.
 //
 
-fileprivate var shared: BuildFileContext? = nil
+private var shared: BuildFileContext? = nil
 
 /// BuildFileContext
 /// Usage:
@@ -17,26 +17,15 @@ struct BuildFileContext {
 
     init(convertibles: [SkylarkConvertible]) {
         var bazelTargetByName: [String: BazelTarget] = [:]
-        convertibles.forEach { convertible in
-            guard let target = convertible as? BazelTarget else {
-                return
-            }
+        convertibles.forEach { convertible in guard let target = convertible as? BazelTarget else { return }
             bazelTargetByName[target.name] = target
         }
         self.bazelTargetByName = bazelTargetByName
     }
 
-    public func getBazelTarget(name: String) -> BazelTarget? {
-        return bazelTargetByName[name]
-    }
+    public func getBazelTarget(name: String) -> BazelTarget? { return bazelTargetByName[name] }
 
-    public static func set(_ context: BuildFileContext?) {
-        shared = context
-    }
+    public static func set(_ context: BuildFileContext?) { shared = context }
 
-    public static func get() -> BuildFileContext? {
-        return shared
-    }
+    public static func get() -> BuildFileContext? { return shared }
 }
-
-

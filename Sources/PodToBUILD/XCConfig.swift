@@ -21,9 +21,7 @@ public protocol XCConfigValueTransformer {
     var xcconfigKey: String { get }
 }
 
-enum XCConfigValueTransformerError: Error {
-    case unimplemented
-}
+enum XCConfigValueTransformerError: Error { case unimplemented }
 
 public struct XCConfigTransformer {
     private let registry: [String: XCConfigValueTransformer]
@@ -36,17 +34,13 @@ public struct XCConfigTransformer {
 
     func compilerFlag(forXCConfigKey key: String, XCConfigValue value: String) throws -> [String] {
         // Case insensitve?
-        guard let transformer = registry[key] else {
-            throw XCConfigValueTransformerError.unimplemented
-        }
+        guard let transformer = registry[key] else { throw XCConfigValueTransformerError.unimplemented }
 
         let allValues = value.components(separatedBy: CharacterSet.whitespaces)
         return allValues.filter { $0 != "$(inherited)" }
-            .compactMap { val in
-                let podDir = getPodBaseDir()
+            .compactMap { val in let podDir = getPodBaseDir()
                 let targetDir = getGenfileOutputBaseDir()
-                return transformer.string(forXCConfigValue: val)?
-                    .replacingOccurrences(of: "$(PODS_ROOT)", with: podDir)
+                return transformer.string(forXCConfigValue: val)?.replacingOccurrences(of: "$(PODS_ROOT)", with: podDir)
                     .replacingOccurrences(of: "${PODS_ROOT}", with: podDir)
                     .replacingOccurrences(of: "$(PODS_TARGET_SRCROOT)", with: targetDir)
                     .replacingOccurrences(of: "${PODS_TARGET_SRCROOT}", with: targetDir)
@@ -55,33 +49,22 @@ public struct XCConfigTransformer {
 
     public static func defaultTransformer(externalName: String, sourceType: BazelSourceLibType) -> XCConfigTransformer {
         if sourceType == .swift {
-            return XCConfigTransformer(transformers: [
-                SwiftApplicationExtensionAPIOnlyTransformer()
-            ])
+            return XCConfigTransformer(transformers: [SwiftApplicationExtensionAPIOnlyTransformer()])
         }
         return XCConfigTransformer(transformers: [
-            PassthroughTransformer(xcconfigKey: "OTHER_CFLAGS"),
-            PassthroughTransformer(xcconfigKey: "OTHER_LDFLAGS"),
+            PassthroughTransformer(xcconfigKey: "OTHER_CFLAGS"), PassthroughTransformer(xcconfigKey: "OTHER_LDFLAGS"),
             PassthroughTransformer(xcconfigKey: "OTHER_CPLUSPLUSFLAGS"),
-            HeaderSearchPathTransformer(externalName: externalName),
-            CXXLibraryTransformer(enabled: sourceType == .cpp),
-            CXXLanguageStandardTransformer(enabled: sourceType == .cpp),
-            PreprocessorDefinesTransformer(),
-            AllowNonModularIncludesInFrameworkModulesTransformer(),
-            ApplicationExtensionAPIOnlyTransformer(),
+            HeaderSearchPathTransformer(externalName: externalName), CXXLibraryTransformer(enabled: sourceType == .cpp),
+            CXXLanguageStandardTransformer(enabled: sourceType == .cpp), PreprocessorDefinesTransformer(),
+            AllowNonModularIncludesInFrameworkModulesTransformer(), ApplicationExtensionAPIOnlyTransformer(),
             PreCompilePrefixHeaderTransformer(),
         ])
     }
 
     public func compilerFlags(forXCConfig xcconfig: [String: String]?) -> [String] {
         if let xcconfig = xcconfig {
-            return xcconfig.keys
-                .sorted(by: <)
-                .compactMap {
-                    key -> [String]? in
-                    guard let value = xcconfig[key] else {
-                        return nil
-                    }
+            return xcconfig.keys.sorted(by: <)
+                .compactMap { key -> [String]? in guard let value = xcconfig[key] else { return nil }
                     return try? compilerFlag(forXCConfigKey: key, XCConfigValue: value)
                 }
                 .flatMap { $0 }
@@ -96,23 +79,15 @@ public struct XCConfigTransformer {
 public struct PassthroughTransformer: XCConfigValueTransformer {
     private let key: String
 
-    public var xcconfigKey: String {
-        return self.key
-    }
+    public var xcconfigKey: String { return self.key }
 
-    init(xcconfigKey: String) {
-        self.key = xcconfigKey
-    }
+    init(xcconfigKey: String) { self.key = xcconfigKey }
 
-    public func string(forXCConfigValue value: String) -> String? {
-        return value
-    }
+    public func string(forXCConfigValue value: String) -> String? { return value }
 }
 
 public struct PreCompilePrefixHeaderTransformer: XCConfigValueTransformer {
-    public var xcconfigKey: String {
-        return "GCC_PRECOMPILE_PREFIX_HEADER"
-    }
+    public var xcconfigKey: String { return "GCC_PRECOMPILE_PREFIX_HEADER" }
 
     public func string(forXCConfigValue _: String) -> String? {
         // TODO: Implement precompiled header support in Bazel.
@@ -123,33 +98,26 @@ public struct PreCompilePrefixHeaderTransformer: XCConfigValueTransformer {
 public struct HeaderSearchPathTransformer: XCConfigValueTransformer {
     public static let xcconfigKey = "HEADER_SEARCH_PATHS"
     public var xcconfigKey: String = HeaderSearchPathTransformer.xcconfigKey
-    
+
     let externalName: String
-    init(externalName: String) {
-        self.externalName = externalName;
-    }
-    
+    init(externalName: String) { self.externalName = externalName }
+
     public func string(forXCConfigValue value: String) -> String? {
-        let cleaned = value.replacingOccurrences(of: "$(PODS_TARGET_SRCROOT)",
-            with: "\(getPodBaseDir())/\(externalName)").replacingOccurrences(of: "\"", with: "")
+        let cleaned =
+            value.replacingOccurrences(of: "$(PODS_TARGET_SRCROOT)", with: "\(getPodBaseDir())/\(externalName)")
+            .replacingOccurrences(of: "\"", with: "")
         return "-I\(cleaned)"
     }
 }
 
 public struct PreprocessorDefinesTransformer: XCConfigValueTransformer {
-    public var xcconfigKey: String {
-        return "GCC_PREPROCESSOR_DEFINITIONS"
-    }
+    public var xcconfigKey: String { return "GCC_PREPROCESSOR_DEFINITIONS" }
 
-    public func string(forXCConfigValue value: String) -> String? {
-        return "-D\(value)"
-    }
+    public func string(forXCConfigValue value: String) -> String? { return "-D\(value)" }
 }
 
 public struct AllowNonModularIncludesInFrameworkModulesTransformer: XCConfigValueTransformer {
-    public var xcconfigKey: String {
-        return "CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES"
-    }
+    public var xcconfigKey: String { return "CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES" }
 
     public func string(forXCConfigValue _: String) -> String? {
         return "-Wno-non-modular-include-in-framework-module -Wno-error=noon-modular-include-in-framework-module"
@@ -157,9 +125,7 @@ public struct AllowNonModularIncludesInFrameworkModulesTransformer: XCConfigValu
 }
 
 public struct SwiftApplicationExtensionAPIOnlyTransformer: XCConfigValueTransformer {
-    public var xcconfigKey: String {
-        return "APPLICATION_EXTENSION_API_ONLY" 
-    }
+    public var xcconfigKey: String { return "APPLICATION_EXTENSION_API_ONLY" }
 
     public func string(forXCConfigValue value: String) -> String? {
         return value == "YES" || value == "yes" ? "-application-extension" : nil
@@ -167,9 +133,7 @@ public struct SwiftApplicationExtensionAPIOnlyTransformer: XCConfigValueTransfor
 }
 
 public struct ApplicationExtensionAPIOnlyTransformer: XCConfigValueTransformer {
-    public var xcconfigKey: String {
-        return "APPLICATION_EXTENSION_API_ONLY" 
-    }
+    public var xcconfigKey: String { return "APPLICATION_EXTENSION_API_ONLY" }
 
     public func string(forXCConfigValue value: String) -> String? {
         return value == "YES" || value == "yes" ? "-fapplication-extension" : nil
@@ -182,18 +146,12 @@ public struct ApplicationExtensionAPIOnlyTransformer: XCConfigValueTransformer {
 public struct CXXLanguageStandardTransformer: XCConfigValueTransformer {
     let enabled: Bool
 
-    init(enabled: Bool) {
-        self.enabled = enabled
-    }
+    init(enabled: Bool) { self.enabled = enabled }
 
-    public var xcconfigKey: String {
-        return "CLANG_CXX_LANGUAGE_STANDARD"
-    }
+    public var xcconfigKey: String { return "CLANG_CXX_LANGUAGE_STANDARD" }
 
     public func string(forXCConfigValue value: String) -> String? {
-        guard enabled else {
-            return nil
-        }
+        guard enabled else { return nil }
         return "-std=\(value)"
     }
 }
@@ -201,18 +159,12 @@ public struct CXXLanguageStandardTransformer: XCConfigValueTransformer {
 public struct CXXLibraryTransformer: XCConfigValueTransformer {
     let enabled: Bool
 
-    init(enabled: Bool) {
-        self.enabled = enabled
-    }
+    init(enabled: Bool) { self.enabled = enabled }
 
-    public var xcconfigKey: String {
-        return "CLANG_CXX_LIBRARY"
-    }
+    public var xcconfigKey: String { return "CLANG_CXX_LIBRARY" }
 
     public func string(forXCConfigValue value: String) -> String? {
-        guard enabled else {
-            return nil
-        }
+        guard enabled else { return nil }
         return "-stdlib=\(value)"
     }
 }
@@ -220,12 +172,8 @@ public struct CXXLibraryTransformer: XCConfigValueTransformer {
 extension XCConfigTransformer {
     func compilerFlags(for spec: FallbackSpec) -> [String] {
         /// TODO: This operation should operate on the AttrSet
-        return self.compilerFlags(forXCConfig:
-                spec.attr(\.podTargetXcconfig).basic ?? [:]) +
-            self.compilerFlags(forXCConfig:
-                spec.attr(\.userTargetXcconfig).basic ?? [:]) +
-            self.compilerFlags(forXCConfig:
-                spec.attr(\.xcconfig).basic ?? [:])
+        return self.compilerFlags(forXCConfig: spec.attr(\.podTargetXcconfig).basic ?? [:])
+            + self.compilerFlags(forXCConfig: spec.attr(\.userTargetXcconfig).basic ?? [:])
+            + self.compilerFlags(forXCConfig: spec.attr(\.xcconfig).basic ?? [:])
     }
 }
-

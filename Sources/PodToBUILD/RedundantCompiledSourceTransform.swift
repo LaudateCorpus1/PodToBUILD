@@ -8,36 +8,28 @@
 
 import Foundation
 
-
 // A target that has files that we are concerned with refining
-protocol SourceExcludable : BazelTarget {
+protocol SourceExcludable: BazelTarget {
     func addExcluded(targets: [BazelTarget]) -> BazelTarget
 
     var deps: AttrSet<[String]> { get }
 }
 
-
 extension Dictionary where Key == String {
     // Do not rewrite names for @
     // the below logic only works for internal deps.
     func get(bazelName: String) -> Value? {
-        if bazelName.contains("//Vendor") || bazelName.contains("@") {
-            return self[bazelName]
-        }
+        if bazelName.contains("//Vendor") || bazelName.contains("@") { return self[bazelName] }
         return bazelName.components(separatedBy: ":").last.flatMap { self[$0] }
     }
 
     mutating func set(bazelName: String, newValue: Value) {
-        if bazelName.contains("//Vendor") || bazelName.contains("@") {
-            self[bazelName] = newValue
-        }
-        if let key = bazelName.components(separatedBy: ":").last {
-            self[key] = newValue
-        }
+        if bazelName.contains("//Vendor") || bazelName.contains("@") { self[bazelName] = newValue }
+        if let key = bazelName.components(separatedBy: ":").last { self[key] = newValue }
     }
 }
 
-struct RedundantCompiledSourceTransform : SkylarkConvertibleTransform {
+struct RedundantCompiledSourceTransform: SkylarkConvertibleTransform {
     // In Cocoapods, all internal targets are flatted to a single target
     // i.e. subspecs are used to describe attributes of source file, have this
     // source code compiled into the top level target
@@ -66,24 +58,17 @@ struct RedundantCompiledSourceTransform : SkylarkConvertibleTransform {
     //     ":Core"
     //   ],
 
-
     private static func collect(for convertible: BazelTarget, reverseDeps: [String: [BazelTarget]]) -> [BazelTarget] {
-        var queue:  [BazelTarget] = [convertible]
+        var queue: [BazelTarget] = [convertible]
         var output = [BazelTarget]()
         var visited = [String]()
         repeat {
-            guard let convertible = queue.first else {
-                fatalError("Wrong")
-            }
+            guard let convertible = queue.first else { fatalError("Wrong") }
             queue.removeLast()
-            if visited.contains(convertible.name) {
-                continue
-            }
+            if visited.contains(convertible.name) { continue }
             let targetReverseDeps = reverseDeps.get(bazelName: convertible.name) ?? []
             for dep in targetReverseDeps {
-                if visited.contains(dep.name) {
-                    continue
-                }
+                if visited.contains(dep.name) { continue }
                 queue.append(dep)
             }
             output.append(contentsOf: targetReverseDeps)
@@ -92,34 +77,27 @@ struct RedundantCompiledSourceTransform : SkylarkConvertibleTransform {
         return output
     }
 
-    public static func transform(convertibles: [BazelTarget], options: BuildOptions, podSpec: PodSpec) ->  [BazelTarget] {
+    public static func transform(convertibles: [BazelTarget], options: BuildOptions, podSpec: PodSpec) -> [BazelTarget]
+    {
         // Needed
-        func toSourceExcludable(_ input: BazelTarget) -> SourceExcludable? {
-            return input as? SourceExcludable
-        }
+        func toSourceExcludable(_ input: BazelTarget) -> SourceExcludable? { return input as? SourceExcludable }
         var targetByName = [String: BazelTarget]()
         convertibles.forEach { targetByName[$0.name] = $0 }
 
         var reverseDeps = [String: [BazelTarget]]()
-        convertibles.forEach {
-            convertible in
-            (convertible as? SourceExcludable)?.deps.basic?.forEach {
-                dep in
-                let name = dep
-                let rDepName = convertible.name
-                var arr: [BazelTarget] = reverseDeps.get(bazelName: name) ?? []
-                if let t = targetByName.get(bazelName: rDepName) {
-                    arr.append(t)
+        convertibles.forEach { convertible in
+            (convertible as? SourceExcludable)?.deps.basic?
+                .forEach { dep in let name = dep
+                    let rDepName = convertible.name
+                    var arr: [BazelTarget] = reverseDeps.get(bazelName: name) ?? []
+                    if let t = targetByName.get(bazelName: rDepName) { arr.append(t) }
+                    reverseDeps.set(bazelName: name, newValue: arr)
                 }
-                reverseDeps.set(bazelName: name,  newValue: arr)
-            }
         }
-        let outputConvertibles = convertibles.compactMap {
-            convertible -> BazelTarget? in
-            let targetReverseDeps = collect(for: convertible, reverseDeps:
-                                            reverseDeps)
+        let outputConvertibles = convertibles.compactMap { convertible -> BazelTarget? in
+            let targetReverseDeps = collect(for: convertible, reverseDeps: reverseDeps)
             let output = toSourceExcludable(convertible)
-            return output?.addExcluded(targets: targetReverseDeps) ??  convertible
+            return output?.addExcluded(targets: targetReverseDeps) ?? convertible
         }
 
         // Rewrite the input with the fixed-excludables

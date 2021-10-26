@@ -14,13 +14,7 @@ public protocol BazelTarget: SkylarkConvertible {
 }
 
 extension BazelTarget {
-    public var acknowledgedDeps: [String]? {
-        return nil
-    }
+    public var acknowledgedDeps: [String]? { return nil }
 
-    public var acknowledged: Bool {
-        return false
-    }
+    public var acknowledged: Bool { return false }
 }
-
-

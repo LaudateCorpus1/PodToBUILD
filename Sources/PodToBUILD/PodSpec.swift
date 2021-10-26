@@ -114,7 +114,7 @@ public enum PodSpecField: String {
     case license
     case podTargetXcconfig = "pod_target_xcconfig"
     case userTargetXcconfig = "user_target_xcconfig"
-    case xcconfig // Legacy
+    case xcconfig  // Legacy
     case ios
     case osx
     case tvos
@@ -206,13 +206,15 @@ public struct PodSpec: PodSpecRepresentable {
 
     public init(JSONPodspec: JSONDict) throws {
 
-        let fieldMap: [PodSpecField: Any] = Dictionary(tuples: JSONPodspec.compactMap { k, v in
-            guard let field = PodSpecField.init(rawValue: k) else {
-                fputs("WARNING: Unsupported field in Podspec \(k)\n", __stderrp)
-                return nil
+        let fieldMap: [PodSpecField: Any] = Dictionary(
+            tuples: JSONPodspec.compactMap { k, v in
+                guard let field = PodSpecField.init(rawValue: k) else {
+                    fputs("WARNING: Unsupported field in Podspec \(k)\n", __stderrp)
+                    return nil
+                }
+                return .some((field, v))
             }
-            return .some((field, v))
-        })
+        )
 
         if let name = try? ExtractValue(fromJSON: fieldMap[.name]) as String {
             self.name = name
@@ -227,8 +229,9 @@ public struct PodSpec: PodSpecRepresentable {
         publicHeaders = strings(fromJSON: fieldMap[.publicHeaders])
         privateHeaders = strings(fromJSON: fieldMap[.privateHeaders])
 
-        prefixHeaderFile  = (fieldMap[.prefixHeaderFile] as? Bool).map{ .left($0) } ?? // try a bool
-	        (fieldMap[.prefixHeaderFile] as? String).map { .right($0) } // try a string
+        prefixHeaderFile =
+            (fieldMap[.prefixHeaderFile] as? Bool).map { .left($0) }  // try a bool
+            ?? (fieldMap[.prefixHeaderFile] as? String).map { .right($0) }  // try a string
 
         prefixHeaderContents = fieldMap[.prefixHeaderContents] as? String
 
@@ -243,8 +246,9 @@ public struct PodSpec: PodSpecRepresentable {
 
         headerDirectory = fieldMap[.headerDirectory] as? String
         moduleName = fieldMap[.moduleName] as? String
-        requiresArc = (fieldMap[.requiresArc] as? Bool).map{ .left($0) } ?? // try a bool
-	        stringsStrict(fromJSON: fieldMap[.requiresArc]).map{ .right($0) } // try a string
+        requiresArc =
+            (fieldMap[.requiresArc] as? Bool).map { .left($0) }  // try a bool
+            ?? stringsStrict(fromJSON: fieldMap[.requiresArc]).map { .right($0) }  // try a string
 
         if let podSubspecDependencies = fieldMap[.dependencies] as? JSONDict {
             dependencies = Array(podSubspecDependencies.keys)
@@ -253,9 +257,7 @@ public struct PodSpec: PodSpecRepresentable {
         }
 
         if let resourceBundleMap = fieldMap[.resourceBundles] as? JSONDict {
-            resourceBundles = Dictionary(tuples: resourceBundleMap.map { key, val in
-                (key, strings(fromJSON: val))
-            })
+            resourceBundles = Dictionary(tuples: resourceBundleMap.map { key, val in (key, strings(fromJSON: val)) })
         } else {
             resourceBundles = [:]
         }
@@ -293,9 +295,7 @@ public struct FallbackSpec {
     public func attr<T>(_ keyPath: KeyPath<PodSpecRepresentable, T>) -> AttrSet<T> {
         for spec in specs {
             let value = spec.attr(keyPath)
-            if !value.isEmpty {
-                return value
-            }
+            if !value.isEmpty { return value }
         }
         return AttrSet.empty
     }
@@ -308,7 +308,7 @@ public enum PodSpecSource {
     case http(url: URL)
 
     static func source(fromDict dict: JSONDict) -> PodSpecSource {
-        if let gitURLString: String = try? ExtractValue(fromJSON: dict["git"])  {
+        if let gitURLString: String = try? ExtractValue(fromJSON: dict["git"]) {
             guard let gitURL = URL(string: gitURLString) else {
                 fatalError("Invalid source URL for Git: \(gitURLString)")
             }
@@ -340,14 +340,12 @@ public struct PodSpecLicense {
     public static func license(fromJSON value: Any?) -> PodSpecLicense {
         if let licenseJSON = value as? JSONDict {
             return PodSpecLicense(
-                    type: try? ExtractValue(fromJSON: licenseJSON["type"]),
-                    text: try? ExtractValue(fromJSON: licenseJSON["text"]),
-                    file: try? ExtractValue(fromJSON: licenseJSON["file"])
-                    )
+                type: try? ExtractValue(fromJSON: licenseJSON["type"]),
+                text: try? ExtractValue(fromJSON: licenseJSON["text"]),
+                file: try? ExtractValue(fromJSON: licenseJSON["file"])
+            )
         }
-        if let licenseString = value as? String {
-            return PodSpecLicense(type: licenseString, text: nil, file: nil)
-        }
+        if let licenseString = value as? String { return PodSpecLicense(type: licenseString, text: nil, file: nil) }
         return PodSpecLicense(type: nil, text: nil, file: nil)
     }
 }
@@ -356,14 +354,10 @@ public struct PodSpecLicense {
 
 public typealias JSONDict = [String: Any]
 
-public enum JSONError: Error {
-    case unexpectedValueError
-}
+public enum JSONError: Error { case unexpectedValueError }
 
 public func ExtractValue<T>(fromJSON JSON: Any?) throws -> T {
-    if let value = JSON as? T {
-        return value
-    }
+    if let value = JSON as? T { return value }
     throw JSONError.unexpectedValueError
 }
 
@@ -371,22 +365,13 @@ public func ExtractValue<T>(fromJSON JSON: Any?) throws -> T {
 // Coerce to a more sane type, since we don't care about the
 // original input
 public func strings(fromJSON JSONValue: Any? = nil) -> [String] {
-    if let str = JSONValue as? String {
-        return [str]
-    }
-    if let array = JSONValue as? [String] {
-        return array
-    }
+    if let str = JSONValue as? String { return [str] }
+    if let array = JSONValue as? [String] { return array }
     return [String]()
 }
 
-fileprivate func stringsStrict(fromJSON JSONValue: Any? = nil) -> [String]? {
-    if let str = JSONValue as? String {
-        return [str]
-    }
-    if let array = JSONValue as? [String] {
-        return array
-    }
+private func stringsStrict(fromJSON JSONValue: Any? = nil) -> [String]? {
+    if let str = JSONValue as? String { return [str] }
+    if let array = JSONValue as? [String] { return array }
     return nil
 }
-

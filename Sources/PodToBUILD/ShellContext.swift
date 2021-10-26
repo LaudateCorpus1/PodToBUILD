@@ -27,11 +27,11 @@ public struct CommandBinary {
 
 extension CommandOutput {
     /// Return Standard Output as a String
-    public var standardOutputAsString : String {
+    public var standardOutputAsString: String {
         return String(data: standardOutputData, encoding: String.Encoding.utf8) ?? ""
     }
-    
-    public var standardErrorAsString : String {
+
+    public var standardErrorAsString: String {
         return String(data: standardErrorData, encoding: String.Encoding.utf8) ?? ""
     }
 }
@@ -52,11 +52,11 @@ public protocol ShellContext {
     func hardLink(from: String, to: String)
 
     func symLink(from: String, to: String)
-    
+
     func write(value: String, toPath path: URL)
-    
+
     func download(url: URL, toFile: String) -> Bool
-    
+
     func tmpdir() -> String
 }
 
@@ -67,7 +67,7 @@ public func escape(_ string: String) -> String {
 
 let kTaskDidFinishNotificationName = NSNotification.Name(rawValue: "kTaskDidFinishNotificationName")
 
-private struct ShellTaskResult : CommandOutput {
+private struct ShellTaskResult: CommandOutput {
     let standardErrorData: Data
     let standardOutputData: Data
     let terminationStatus: Int32
@@ -75,7 +75,7 @@ private struct ShellTaskResult : CommandOutput {
 
 /// Shell task runs a given command and waits
 /// for it to terminate or timeout
-class ShellTask : NSObject {
+class ShellTask: NSObject {
     let timeout: CFTimeInterval
     let command: String
     let path: String?
@@ -84,8 +84,7 @@ class ShellTask : NSObject {
     private var standardOutputData: Data
     private var standardErrorData: Data
 
-    init(command: String, arguments: [String], timeout: CFTimeInterval, cwd:
-         String? = nil, printOutput: Bool = false) {
+    init(command: String, arguments: [String], timeout: CFTimeInterval, cwd: String? = nil, printOutput: Bool = false) {
         self.command = command
         self.arguments = arguments
         self.timeout = timeout
@@ -97,26 +96,25 @@ class ShellTask : NSObject {
 
     /// Create a task with a script and timeout
     /// By default, it runs under bash for the current path.
-    public static func with(script: String, timeout: Double, cwd: String? = nil,
-                            printOutput: Bool = false) -> ShellTask {
+    public static func with(script: String, timeout: Double, cwd: String? = nil, printOutput: Bool = false) -> ShellTask
+    {
         let path = ProcessInfo.processInfo.environment["PATH"]!
         let script = "PATH=\"\(path)\" /bin/sh -c '\(script)'"
-        return ShellTask(command: "/bin/bash", arguments: ["-c", script],
-                timeout: timeout, cwd: cwd, printOutput: printOutput)
+        return ShellTask(
+            command: "/bin/bash",
+            arguments: ["-c", script],
+            timeout: timeout,
+            cwd: cwd,
+            printOutput: printOutput
+        )
     }
 
-    override var description: String {
-        return "ShellTask: " + command + " " + arguments.joined(separator: " ")
-    }
-    override var debugDescription : String {
-        return description
-    }
+    override var description: String { return "ShellTask: " + command + " " + arguments.joined(separator: " ") }
+    override var debugDescription: String { return description }
 
     class RunLoopContext {
         var process: Process
-        init (process: Process) {
-            self.process = process
-        }
+        init(process: Process) { self.process = process }
     }
 
     /// Launch a task and get the output
@@ -141,39 +139,27 @@ class ShellTask : NSObject {
 
         // Handle the result
         return constructProcessResult(
-                stream: stream,
-                stdout: stdout,
-                stderr: stderr,
-                process: process,
-                exception: exception
+            stream: stream,
+            stdout: stdout,
+            stderr: stderr,
+            process: process,
+            exception: exception
         )
     }
 
     private func createProcess(stream: Bool, stdout: Pipe, stderr: Pipe) -> Process {
         let process = Process()
         if stream {
-            stdout.fileHandleForReading.readabilityHandler = {
-                handle in
-                let data = handle.availableData
-                guard data.count > 0 else {
-                    return
-                }
-                if self.printOutput {
-                    FileHandle.standardOutput.write(data)
-                }
+            stdout.fileHandleForReading.readabilityHandler = { handle in let data = handle.availableData
+                guard data.count > 0 else { return }
+                if self.printOutput { FileHandle.standardOutput.write(data) }
                 self.standardOutputData.append(data)
             }
-            stderr.fileHandleForReading.readabilityHandler = {
-                handle in
-                let data = handle.availableData
-                guard data.count > 0 else {
-                    return
-                }
-                if self.printOutput {
-                    FileHandle.standardError.write(data)
-                }
+            stderr.fileHandleForReading.readabilityHandler = { handle in let data = handle.availableData
+                guard data.count > 0 else { return }
+                if self.printOutput { FileHandle.standardError.write(data) }
                 self.standardErrorData.append(data)
-             }
+            }
         }
         var env = ProcessInfo.processInfo.environment
         env["LANG"] = "en_US.UTF-8"
@@ -187,29 +173,25 @@ class ShellTask : NSObject {
                 process.currentDirectoryURL = URL(fileURLWithPath: cwd)
             } else {
                 // Fallback on earlier versions
-                process.currentDirectoryPath  = cwd
+                process.currentDirectoryPath = cwd
             }
         }
         return process
     }
 
-    private func constructProcessResult(
-            stream: Bool,
-            stdout: Pipe,
-            stderr: Pipe,
-            process: Process,
-            exception: Any?
-    ) -> ShellTaskResult {
+    private func constructProcessResult(stream: Bool, stdout: Pipe, stderr: Pipe, process: Process, exception: Any?)
+        -> ShellTaskResult
+    {
         if exception != nil {
             if !stream {
                 self.standardErrorData = stderr.fileHandleForReading.readDataToEndOfFile()
-                if self.printOutput {
-                    FileHandle.standardError.write(self.standardErrorData)
-                }
+                if self.printOutput { FileHandle.standardError.write(self.standardErrorData) }
             }
-            return ShellTaskResult(standardErrorData: standardErrorData,
-                    standardOutputData: Data(),
-                    terminationStatus: 42)
+            return ShellTaskResult(
+                standardErrorData: standardErrorData,
+                standardOutputData: Data(),
+                terminationStatus: 42
+            )
         }
 
         if !stream {
@@ -221,16 +203,16 @@ class ShellTask : NSObject {
             }
         }
         return ShellTaskResult(
-                standardErrorData: standardErrorData,
-                standardOutputData: standardOutputData,
-                terminationStatus: process.terminationStatus
+            standardErrorData: standardErrorData,
+            standardOutputData: standardOutputData,
+            terminationStatus: process.terminationStatus
         )
     }
 }
 
 /// SystemShellContext is a shell context that mutates the user's system
 /// All mutations may be logged
-public struct SystemShellContext : ShellContext {
+public struct SystemShellContext: ShellContext {
     func command(_ launchPath: String, arguments: [String]) -> (String, CommandOutput) {
         let data = startShellAndWait(launchPath, arguments: arguments)
         let string = String(data: data.standardOutputData, encoding: String.Encoding.utf8) ?? ""
@@ -252,9 +234,7 @@ public struct SystemShellContext : ShellContext {
 
     @discardableResult public func shellOut(_ script: String) -> CommandOutput {
         log("SHELL:\(script)")
-        let task = ShellTask.with(script: script,
-                                  timeout: FOUR_HOURS_TIME_CONSTANT,
-                                  printOutput: trace)
+        let task = ShellTask.with(script: script, timeout: FOUR_HOURS_TIME_CONSTANT, printOutput: trace)
         let result = task.launch()
         let stderrData = result.standardErrorData
         let stdoutData = result.standardOutputData
@@ -282,39 +262,32 @@ public struct SystemShellContext : ShellContext {
         do {
             try FileManager.default.createSymbolicLink(atPath: to, withDestinationPath: from)
             print("LINK SUCCESS")
-        } catch {
-            print("LINK ERROR: ", error.localizedDescription)
-        }
+        } catch { print("LINK ERROR: ", error.localizedDescription) }
     }
 
     public func write(value: String, toPath path: URL) {
         log("WRITE \(value) TO \(path)")
         try? value.write(to: path, atomically: false, encoding: String.Encoding.utf8)
     }
-    
+
     public func download(url: URL, toFile file: String) -> Bool {
         log("DOWNLOAD \(url) TO \(file)")
-        guard let fileData = NSData(contentsOf: url) else {
-            return false
-        }
+        guard let fileData = NSData(contentsOf: url) else { return false }
         let err: AutoreleasingUnsafeMutablePointer<NSError?>? = nil
-        NSFileCoordinator().coordinate(writingItemAt: url,
-                                       options: NSFileCoordinator.WritingOptions.forReplacing,
-                                       error: err) { (fileURL) in
-                FileManager.default.createFile(atPath: file, contents: fileData as Data, attributes: nil)
-        }
+        NSFileCoordinator()
+            .coordinate(writingItemAt: url, options: NSFileCoordinator.WritingOptions.forReplacing, error: err) {
+                (fileURL) in FileManager.default.createFile(atPath: file, contents: fileData as Data, attributes: nil)
+            }
         return (err == nil)
     }
-    
+
     public func tmpdir() -> String {
         log("CREATE TMPDIR")
         // Taken from https://stackoverflow.com/a/46701313/3000133
         let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         do {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
-        } catch {
-            fatalError("Can't create temp dir")
-        }
+        } catch { fatalError("Can't create temp dir") }
         return url.path
     }
 
@@ -322,24 +295,21 @@ public struct SystemShellContext : ShellContext {
 
     // Start a shell and wait for the result
     // @note we use UTF-8 here as the default language and the current env
-    private func startShellAndWait(_ launchPath: String, arguments: [String] =
-            [String]()) -> CommandOutput {
+    private func startShellAndWait(_ launchPath: String, arguments: [String] = [String]()) -> CommandOutput {
         log("COMMAND:\(launchPath) \(arguments)")
-        let task = ShellTask(command: launchPath, arguments: arguments,
-                timeout: FOUR_HOURS_TIME_CONSTANT, printOutput: trace)
+        let task = ShellTask(
+            command: launchPath,
+            arguments: arguments,
+            timeout: FOUR_HOURS_TIME_CONSTANT,
+            printOutput: trace
+        )
         let result = task.launch()
         let statusCode = result.terminationStatus
         log("TASK EXITED\(launchPath) \(arguments) code:\(statusCode )")
         return result
     }
 
-    private func readData(_ data: Data) -> String {
-        return String(data: data, encoding: String.Encoding.utf8) ?? ""
-    }
+    private func readData(_ data: Data) -> String { return String(data: data, encoding: String.Encoding.utf8) ?? "" }
 
-    private func log(_ args: Any...) {
-        if trace {
-            print(args.map { "\($0)" }.joined(separator: " ") )
-        }
-    }
+    private func log(_ args: Any...) { if trace { print(args.map { "\($0)" }.joined(separator: " ")) } }
 }

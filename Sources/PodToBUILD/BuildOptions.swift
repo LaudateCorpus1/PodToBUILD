@@ -20,7 +20,7 @@ public protocol BuildOptions {
 
     // pod_support, everything, none
     var headerVisibility: String { get }
-    
+
     var alwaysSplitRules: Bool { get }
     var vendorize: Bool { get }
     var childPaths: [String] { get }
@@ -43,19 +43,20 @@ public struct BasicBuildOptions: BuildOptions {
     public let childPaths: [String]
     public let isDynamicFramework: Bool
 
-    public init(podName: String = "",
-                path: String = ".",
-                userOptions: [String] = [],
-                globalCopts: [String] = [],
-                trace: Bool = false,
-                enableModules: Bool = false,
-                generateModuleMap: Bool = false,
-                generateHeaderMap: Bool = false,
-                headerVisibility: String = "",
-                alwaysSplitRules: Bool = true,
-                vendorize: Bool = true,
-                childPaths: [String] = [],
-                isDynamicFramework: Bool = false
+    public init(
+        podName: String = "",
+        path: String = ".",
+        userOptions: [String] = [],
+        globalCopts: [String] = [],
+        trace: Bool = false,
+        enableModules: Bool = false,
+        generateModuleMap: Bool = false,
+        generateHeaderMap: Bool = false,
+        headerVisibility: String = "",
+        alwaysSplitRules: Bool = true,
+        vendorize: Bool = true,
+        childPaths: [String] = [],
+        isDynamicFramework: Bool = false
     ) {
         self.podName = podName
         self.path = path

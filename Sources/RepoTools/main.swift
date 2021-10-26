@@ -7,8 +7,8 @@
 //
 
 import Foundation
-import PodToBUILD
 import ObjcSupport
+import PodToBUILD
 import RepoToolsCore
 
 func main() {
@@ -22,8 +22,8 @@ func main() {
         let shell = SystemShellContext(trace: opts.trace)
         RepoActions.fetch(shell: shell, fetchOptions: opts)
     case let .generateWorkspace(opts):
-       let shell = SystemShellContext(trace: opts.trace)
-       RepoActions.generateWorkspace(shell: shell, workspaceOptions: opts)
+        let shell = SystemShellContext(trace: opts.trace)
+        RepoActions.generateWorkspace(shell: shell, workspaceOptions: opts)
     }
 }
 

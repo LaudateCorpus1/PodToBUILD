@@ -12,7 +12,5 @@ public struct BazelConstants {
 
     /// Note: this is a factory, because we change directories. URL ends up
     /// caching paths relative to the CWD.
-    public static func buildFileURL() -> URL {
-        return URL(fileURLWithPath: buildFilePath)
-    }
+    public static func buildFileURL() -> URL { return URL(fileURLWithPath: buildFilePath) }
 }

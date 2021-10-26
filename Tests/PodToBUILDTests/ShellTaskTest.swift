@@ -7,16 +7,17 @@
 //
 
 import XCTest
+
 @testable import PodToBUILD
 
 class ShellTaskTest: XCTestCase {
-    
+
     func testCanExecute() {
         let task = ShellTask(command: "/usr/bin/whoami", arguments: [], timeout: 1.0)
         let resultStr = task.launch().standardOutputAsString
         XCTAssertTrue(resultStr.count > 0)
     }
-    
+
     func testBashScript() {
         let task = ShellTask.with(script: "echo \"hi\"", timeout: 1)
         let resultStr = task.launch().standardOutputAsString

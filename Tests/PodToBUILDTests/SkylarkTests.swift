@@ -7,6 +7,7 @@
 //
 
 import XCTest
+
 @testable import PodToBUILD
 
 class PodSpecToBUILDTests: XCTestCase {
@@ -15,11 +16,7 @@ class PodSpecToBUILDTests: XCTestCase {
     func testFunctionCall() {
         let call = SkylarkNode.functionCall(name: "objc_library", arguments: [nameArgument])
         let compiler = SkylarkCompiler([call])
-        let expected = compilerOutput([
-            "objc_library(",
-            "  name = \"test\"",
-            ")",
-        ])
+        let expected = compilerOutput(["objc_library(", "  name = \"test\"", ")"])
         print(compiler.run())
         XCTAssertEqual(expected, compiler.run())
     }
@@ -31,15 +28,8 @@ class PodSpecToBUILDTests: XCTestCase {
         let call = SkylarkNode.functionCall(name: "objc_library", arguments: [nameArgument, srcsArg])
         let compiler = SkylarkCompiler([call])
         let expected = compilerOutput([
-            "objc_library(",
-            "  name = \"test\",",
-            "  srcs = glob(",
-            "    [",
-            "      \"a.m\",",
-            "      \"b.m\"",
-            "    ]",
-            "  )",
-            ")",
+            "objc_library(", "  name = \"test\",", "  srcs = glob(", "    [", "      \"a.m\",", "      \"b.m\"",
+            "    ]", "  )", ")",
         ])
 
         let expectedLines = expected.components(separatedBy: "\n")
@@ -48,7 +38,5 @@ class PodSpecToBUILDTests: XCTestCase {
         }
     }
 
-    func compilerOutput(_ values: [String]) -> String {
-        return values.joined(separator: "\n")
-    }
+    func compilerOutput(_ values: [String]) -> String { return values.joined(separator: "\n") }
 }

@@ -7,13 +7,13 @@
 //
 
 import XCTest
+
 @testable import PodToBUILD
 @testable import RepoToolsCore
 
 extension Dictionary {
     static func from<S: Sequence>(_ tuples: S) -> Dictionary where S.Iterator.Element == (Key, Value) {
-        return tuples.reduce([:]) { acc, b in
-            var mut = acc
+        return tuples.reduce([:]) { acc, b in var mut = acc
             mut[b.0] = b.1
             return mut
         }

@@ -7,7 +7,7 @@
 
 /// This represents an alias in Bazel
 /// https://docs.bazel.build/versions/master/be/general.html#alias
-public struct Alias : BazelTarget {
+public struct Alias: BazelTarget {
     public let name: String
     let actual: String
 
@@ -16,9 +16,7 @@ public struct Alias : BazelTarget {
         self.actual = actual
     }
 
-    public var acknowledged: Bool {
-        return false
-    }
+    public var acknowledged: Bool { return false }
 
     public func toSkylark() -> SkylarkNode {
         return .functionCall(
@@ -26,7 +24,7 @@ public struct Alias : BazelTarget {
             arguments: [
                 .named(name: "name", value: bazelLabel(fromString: name).toSkylark()),
                 .named(name: "actual", value: actual.toSkylark()),
-                ])
+            ]
+        )
     }
 }
-

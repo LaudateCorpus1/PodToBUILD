@@ -7,89 +7,113 @@
 //
 
 import XCTest
+
 @testable import PodToBUILD
 
 class BuildFileTests: XCTestCase {
-    func basicGlob(include: Set<String>) -> AttrSet<GlobNode> {
-        return AttrSet(basic: GlobNode(include: include))
-    }
+    func basicGlob(include: Set<String>) -> AttrSet<GlobNode> { return AttrSet(basic: GlobNode(include: include)) }
 
     // MARK: - Transform Tests
     func testWildCardSourceDependentSourceExclusion() {
         let include: Set<String> = ["Source/*.m"]
 
-        let parentLib = ObjcLibrary(name: "Core", externalName: "Core",
-            sourceFiles: basicGlob(include: include))
+        let parentLib = ObjcLibrary(name: "Core", externalName: "Core", sourceFiles: basicGlob(include: include))
 
-        let depLib = ObjcLibrary(name: "ChildLib", externalName: "Core",
+        let depLib = ObjcLibrary(
+            name: "ChildLib",
+            externalName: "Core",
             sourceFiles: basicGlob(include: include),
-            deps: AttrSet(basic: [":Core"]))
+            deps: AttrSet(basic: [":Core"])
+        )
 
         let libByName = executePruneRedundantCompilationTransform(libs: [parentLib, depLib])
         XCTAssertEqual(
-           libByName["Core"]!.sourceFiles,
-           AttrSet(basic: GlobNode(
-               include: [.left(Set(["Source/*.m"]))],
-               exclude: [.right(GlobNode(include: [.left(Set(["Source/*.m"]))]
-                   ))])
-       ))
+            libByName["Core"]!.sourceFiles,
+            AttrSet(
+                basic: GlobNode(
+                    include: [.left(Set(["Source/*.m"]))],
+                    exclude: [.right(GlobNode(include: [.left(Set(["Source/*.m"]))]))]
+                )
+            )
+        )
     }
 
     func testWildCardDirectoryDependentSourceExclusion() {
         let include: Set<String> = ["Source/**/*.m"]
 
-        let parentLib = ObjcLibrary(name: "Core", externalName: "Core",
-            sourceFiles: basicGlob(include: include))
-        let depLib = ObjcLibrary(name: "ChildLib", externalName: "Core",
+        let parentLib = ObjcLibrary(name: "Core", externalName: "Core", sourceFiles: basicGlob(include: include))
+        let depLib = ObjcLibrary(
+            name: "ChildLib",
+            externalName: "Core",
             sourceFiles: basicGlob(include: include),
-            deps: AttrSet(basic: [":Core"]))
+            deps: AttrSet(basic: [":Core"])
+        )
 
         let libByName = executePruneRedundantCompilationTransform(libs: [parentLib, depLib])
         XCTAssertEqual(
-            libByName["Core"]!.sourceFiles, 
-            AttrSet(basic: GlobNode(
-                include: [.left(Set(["Source/**/*.m"]))],
-                exclude: [.right(GlobNode(include: [.left(Set(["Source/**/*.m"]))]
-                    ))])
-        ))
+            libByName["Core"]!.sourceFiles,
+            AttrSet(
+                basic: GlobNode(
+                    include: [.left(Set(["Source/**/*.m"]))],
+                    exclude: [.right(GlobNode(include: [.left(Set(["Source/**/*.m"]))]))]
+                )
+            )
+        )
     }
 
     func testWildCardSourceDependentSourceExclusionWithExistingExclusing() {
-        let parentLib = ObjcLibrary(name: "Core", externalName: "Core",
-            sourceFiles: AttrSet(basic: GlobNode(include:Set(["Source/*.m"]),
-                                                 exclude:
-                                                 Set(["Srce/SomeSource.m"]))))
+        let parentLib = ObjcLibrary(
+            name: "Core",
+            externalName: "Core",
+            sourceFiles: AttrSet(basic: GlobNode(include: Set(["Source/*.m"]), exclude: Set(["Srce/SomeSource.m"])))
+        )
         let childSourceFiles = basicGlob(include: Set(["Source/SomeSource.m"]))
-        let depLib = ObjcLibrary(name: "ChildLib", externalName: "Core",
+        let depLib = ObjcLibrary(
+            name: "ChildLib",
+            externalName: "Core",
             sourceFiles: childSourceFiles,
-            deps: AttrSet(basic: [":Core"]))
+            deps: AttrSet(basic: [":Core"])
+        )
         let libByName = executePruneRedundantCompilationTransform(libs: [parentLib, depLib])
         XCTAssertEqual(
-            libByName["ChildLib"]!.sourceFiles, 
-            AttrSet(basic: GlobNode(
-                include: [.left(Set(["Source/SomeSource.m"]))])
-        ))
+            libByName["ChildLib"]!.sourceFiles,
+            AttrSet(basic: GlobNode(include: [.left(Set(["Source/SomeSource.m"]))]))
+        )
 
         XCTAssertEqual(
             libByName["Core"]!.sourceFiles,
-            AttrSet(basic: GlobNode(
-                include: [.left(Set(["Source/*.m"]))],
-                exclude: [.left(Set(["Srce/SomeSource.m"])), .right(GlobNode(include: [.left(Set(["Source/SomeSource.m"]))]
-                    ))])
-            ))
+            AttrSet(
+                basic: GlobNode(
+                    include: [.left(Set(["Source/*.m"]))],
+                    exclude: [
+                        .left(Set(["Srce/SomeSource.m"])),
+                        .right(GlobNode(include: [.left(Set(["Source/SomeSource.m"]))])),
+                    ]
+                )
+            )
+        )
     }
 
     func testNestedDependentExclusion() {
-        let parentLib = ObjcLibrary(name: "Core", externalName: "Core",
-            sourceFiles: basicGlob(include: Set(["Source/*.m"])))
+        let parentLib = ObjcLibrary(
+            name: "Core",
+            externalName: "Core",
+            sourceFiles: basicGlob(include: Set(["Source/*.m"]))
+        )
 
-        let depLib = ObjcLibrary(name: "ChildLib", externalName: "Core",
+        let depLib = ObjcLibrary(
+            name: "ChildLib",
+            externalName: "Core",
             sourceFiles: AttrSet(basic: GlobNode(include: Set(["Source/Foo/*.m"]))),
-            deps: AttrSet(basic: [":Core"]))
+            deps: AttrSet(basic: [":Core"])
+        )
 
-        let depDepLib = ObjcLibrary(name: "GrandChildLib", externalName: "Core",
+        let depDepLib = ObjcLibrary(
+            name: "GrandChildLib",
+            externalName: "Core",
             sourceFiles: AttrSet(basic: GlobNode(include: Set(["Source/Foo/Bar/*.m"]))),
-            deps: AttrSet(basic: [":ChildLib"]))
+            deps: AttrSet(basic: [":ChildLib"])
+        )
 
         let libByName = executePruneRedundantCompilationTransform(libs: [parentLib, depLib, depDepLib])
 
@@ -98,38 +122,41 @@ class BuildFileTests: XCTestCase {
 
         let childSources = libByName["ChildLib"]?.sourceFiles
         XCTAssertEqual(
-            childSources, 
-            AttrSet(basic: GlobNode(
-                include: [.left(Set(["Source/Foo/*.m"]))],
-                exclude: [.right(GlobNode(include: [.left(Set(["Source/Foo/Bar/*.m"]))]
-                    ))]))
+            childSources,
+            AttrSet(
+                basic: GlobNode(
+                    include: [.left(Set(["Source/Foo/*.m"]))],
+                    exclude: [.right(GlobNode(include: [.left(Set(["Source/Foo/Bar/*.m"]))]))]
+                )
+            )
 
         )
 
         XCTAssertEqual(
             libByName["Core"]?.sourceFiles,
-            AttrSet(basic: GlobNode(
-                include: [.left(Set(["Source/*.m"]))],
-                exclude: [
-                .right(GlobNode(
-                    include: [.left(Set(["Source/Foo/*.m"]))],
-                    exclude: [])), .right(GlobNode(include: [.left(Set(["Source/Foo/Bar/*.m"]))], exclude: []))])
-        ))
+            AttrSet(
+                basic: GlobNode(
+                    include: [.left(Set(["Source/*.m"]))],
+                    exclude: [
+                        .right(GlobNode(include: [.left(Set(["Source/Foo/*.m"]))], exclude: [])),
+                        .right(GlobNode(include: [.left(Set(["Source/Foo/Bar/*.m"]))], exclude: [])),
+                    ]
+                )
+            )
+        )
     }
 
     private func executePruneRedundantCompilationTransform(libs: [ObjcLibrary]) -> [String: ObjcLibrary] {
-        let opts = BasicBuildOptions(podName: "",
-                                     userOptions: [String](),
-                                     globalCopts: [String](),
-                                     trace: false)
-        let transformed = RedundantCompiledSourceTransform.transform(convertibles: libs,
-                                                   options: opts,
-                                                   podSpec: try! PodSpec(JSONPodspec: JSONDict())
-                          )
+        let opts = BasicBuildOptions(podName: "", userOptions: [String](), globalCopts: [String](), trace: false)
+        let transformed = RedundantCompiledSourceTransform.transform(
+            convertibles: libs,
+            options: opts,
+            podSpec: try! PodSpec(JSONPodspec: JSONDict())
+        )
         var libByName = [String: ObjcLibrary]()
         transformed.forEach {
-                let t = ($0 as! ObjcLibrary)
-                libByName[t.name] = t
+            let t = ($0 as! ObjcLibrary)
+            libByName[t.name] = t
         }
         return libByName
     }
@@ -140,11 +167,9 @@ class BuildFileTests: XCTestCase {
         let podspec = examplePodSpecNamed(name: "IGListKit")
         let lib = ObjcLibrary(parentSpecs: [], spec: podspec)
 
-        let expectedFrameworks: AttrSet<[String]> = AttrSet(multi: MultiPlatform(
-            ios: ["UIKit"],
-            osx: ["Cocoa"],
-            watchos: nil,
-            tvos: ["UIKit"]))
+        let expectedFrameworks: AttrSet<[String]> = AttrSet(
+            multi: MultiPlatform(ios: ["UIKit"], osx: ["Cocoa"], watchos: nil, tvos: ["UIKit"])
+        )
         XCTAssert(lib.sdkFrameworks == expectedFrameworks)
     }
 
@@ -152,10 +177,7 @@ class BuildFileTests: XCTestCase {
         let podspec = examplePodSpecNamed(name: "IGListKit")
         let convs = PodBuildFile.makeConvertables(fromPodspec: podspec)
 
-        XCTAssert(
-            AttrSet(basic: [":Default"]) ==
-                (convs.compactMap{ $0 as? ObjcLibrary}.first!).deps
-        )
+        XCTAssert(AttrSet(basic: [":Default"]) == (convs.compactMap { $0 as? ObjcLibrary }.first!).deps)
     }
 
     func testDependOnSubspecs() {
@@ -163,8 +185,7 @@ class BuildFileTests: XCTestCase {
         let convs = PodBuildFile.makeConvertables(fromPodspec: podspec)
 
         XCTAssert(
-            AttrSet(basic: [":Core", ":Arc-exception-safe"]) ==
-                (convs.compactMap{ $0 as? ObjcLibrary}.first!).deps
+            AttrSet(basic: [":Core", ":Arc-exception-safe"]) == (convs.compactMap { $0 as? ObjcLibrary }.first!).deps
         )
     }
 
@@ -173,30 +194,41 @@ class BuildFileTests: XCTestCase {
     func testSwiftExtractionSubspec() {
         let podspec = examplePodSpecNamed(name: "ObjcParentWithSwiftSubspecs")
         let convs = PodBuildFile.makeConvertables(fromPodspec: podspec)
-        XCTAssertEqual(convs.compactMap{ $0 as? ObjcLibrary }.count, 3)
+        XCTAssertEqual(convs.compactMap { $0 as? ObjcLibrary }.count, 3)
         // Note that we check for sources on disk to generate this.
-        XCTAssertEqual(convs.compactMap{ $0 as? SwiftLibrary }.count, 0)
+        XCTAssertEqual(convs.compactMap { $0 as? SwiftLibrary }.count, 0)
     }
-
 
     // MARK: - Source File Extraction Tests
 
     func testExtractionCurly() {
         let podPattern = "Source/Classes/**/*.{h,m}"
-        let extractedHeaders = extractFiles(fromPattern: AttrSet(basic: [podPattern]),
-                includingFileTypes: HeaderFileTypes).basic
-        let extractedSources = extractFiles(fromPattern: AttrSet(basic: [podPattern]),
-                includingFileTypes: ObjcLikeFileTypes).basic
+        let extractedHeaders = extractFiles(
+            fromPattern: AttrSet(basic: [podPattern]),
+            includingFileTypes: HeaderFileTypes
+        )
+        .basic
+        let extractedSources = extractFiles(
+            fromPattern: AttrSet(basic: [podPattern]),
+            includingFileTypes: ObjcLikeFileTypes
+        )
+        .basic
         XCTAssertEqual(extractedHeaders, ["Source/Classes/**/*.h"])
         XCTAssertEqual(extractedSources, ["Source/Classes/**/*.m"])
     }
 
     func testExtractionWithBarPattern() {
         let podPattern = "Source/Classes/**/*.[h,m]"
-        let extractedHeaders = extractFiles(fromPattern: AttrSet(basic: [podPattern]),
-                includingFileTypes: HeaderFileTypes).basic
-        let extractedSources = extractFiles(fromPattern: AttrSet(basic: [podPattern]),
-                includingFileTypes: ObjcLikeFileTypes).basic
+        let extractedHeaders = extractFiles(
+            fromPattern: AttrSet(basic: [podPattern]),
+            includingFileTypes: HeaderFileTypes
+        )
+        .basic
+        let extractedSources = extractFiles(
+            fromPattern: AttrSet(basic: [podPattern]),
+            includingFileTypes: ObjcLikeFileTypes
+        )
+        .basic
 
         XCTAssertEqual(extractedHeaders, ["Source/Classes/**/*.h"])
         XCTAssertEqual(extractedSources, ["Source/Classes/**/*.m"])
@@ -204,10 +236,14 @@ class BuildFileTests: XCTestCase {
 
     func testExtractionMultiplatform() {
         let podPattern = "Source/Classes/**/*.[h,m]"
-        let extractedHeaders = extractFiles(fromPattern: AttrSet(basic: [podPattern]),
-                includingFileTypes: HeaderFileTypes)
-        let extractedSources = extractFiles(fromPattern: AttrSet(basic: [podPattern]),
-                includingFileTypes: ObjcLikeFileTypes)
+        let extractedHeaders = extractFiles(
+            fromPattern: AttrSet(basic: [podPattern]),
+            includingFileTypes: HeaderFileTypes
+        )
+        let extractedSources = extractFiles(
+            fromPattern: AttrSet(basic: [podPattern]),
+            includingFileTypes: ObjcLikeFileTypes
+        )
         XCTAssert(extractedHeaders == AttrSet(basic: ["Source/Classes/**/*.h"]))
         XCTAssert(extractedSources == AttrSet(basic: ["Source/Classes/**/*.m"]))
     }
@@ -220,11 +256,13 @@ class BuildFileTests: XCTestCase {
             return
         }
         XCTAssertEqual(
-            ios, GlobNode(include: Set([
-                    "UICollectionViewLeftAlignedLayout/**/*.h",
-                    "UICollectionViewLeftAlignedLayout/**/*.hpp",
-                    "UICollectionViewLeftAlignedLayout/**/*.hxx"
-                ]))
+            ios,
+            GlobNode(
+                include: Set([
+                    "UICollectionViewLeftAlignedLayout/**/*.h", "UICollectionViewLeftAlignedLayout/**/*.hpp",
+                    "UICollectionViewLeftAlignedLayout/**/*.hxx",
+                ])
+            )
         )
 
     }
@@ -235,10 +273,12 @@ class BuildFileTests: XCTestCase {
         let podSpec = examplePodSpecNamed(name: "googleapis")
         XCTAssertEqual(podSpec.name, "googleapis")
         XCTAssertEqual(podSpec.sourceFiles, [String]())
-        XCTAssertEqual(podSpec.podTargetXcconfig!, [
-            "USER_HEADER_SEARCH_PATHS": "$SRCROOT/..",
-            "GCC_PREPROCESSOR_DEFINITIONS": "$(inherited) GPB_USE_PROTOBUF_FRAMEWORK_IMPORTS=1",
-        ]
+        XCTAssertEqual(
+            podSpec.podTargetXcconfig!,
+            [
+                "USER_HEADER_SEARCH_PATHS": "$SRCROOT/..",
+                "GCC_PREPROCESSOR_DEFINITIONS": "$(inherited) GPB_USE_PROTOBUF_FRAMEWORK_IMPORTS=1",
+            ]
         )
     }
 
@@ -246,10 +286,9 @@ class BuildFileTests: XCTestCase {
         let podSpec = examplePodSpecNamed(name: "IGListKit")
         XCTAssertEqual(podSpec.name, "IGListKit")
         XCTAssertEqual(podSpec.sourceFiles, [String]())
-        XCTAssertEqual(podSpec.podTargetXcconfig!, [
-            "CLANG_CXX_LANGUAGE_STANDARD": "c++11",
-            "CLANG_CXX_LIBRARY": "libc++",
-        ]
+        XCTAssertEqual(
+            podSpec.podTargetXcconfig!,
+            ["CLANG_CXX_LANGUAGE_STANDARD": "c++11", "CLANG_CXX_LIBRARY": "libc++"]
         )
     }
 
@@ -261,19 +300,14 @@ class BuildFileTests: XCTestCase {
             "USER_HEADER_SEARCH_PATHS": "$SRCROOT/..",
             "GCC_PREPROCESSOR_DEFINITIONS": "$(inherited) GPB_USE_PROTOBUF_FRAMEWORK_IMPORTS=1",
         ]
-        let compilerFlags = XCConfigTransformer
-            .defaultTransformer(externalName: "test", sourceType: .objc)
+        let compilerFlags = XCConfigTransformer.defaultTransformer(externalName: "test", sourceType: .objc)
             .compilerFlags(forXCConfig: config)
         XCTAssertEqual(compilerFlags, ["-DGPB_USE_PROTOBUF_FRAMEWORK_IMPORTS=1"])
     }
 
     func testCXXXCConfigs() {
-        let config = [
-            "CLANG_CXX_LANGUAGE_STANDARD": "c++11",
-            "CLANG_CXX_LIBRARY": "libc++",
-        ]
-        let compilerFlags = XCConfigTransformer
-            .defaultTransformer(externalName: "test", sourceType: .cpp)
+        let config = ["CLANG_CXX_LANGUAGE_STANDARD": "c++11", "CLANG_CXX_LIBRARY": "libc++"]
+        let compilerFlags = XCConfigTransformer.defaultTransformer(externalName: "test", sourceType: .cpp)
             .compilerFlags(forXCConfig: config)
         XCTAssertEqual(compilerFlags.sorted(by: (<)), ["-std=c++11", "-stdlib=libc++"])
     }

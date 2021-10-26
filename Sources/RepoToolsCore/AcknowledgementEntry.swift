@@ -24,18 +24,14 @@ import PodToBUILD
 /// Read the first LICENSE file at the root of the directory. It doesn't matter
 /// what this file is called
 private func ReadLicense(file: String?) -> String {
-    guard let licensePath = file ?? podGlob(pattern: "*LICENSE*").first else {
-        return ""
-    }
+    guard let licensePath = file ?? podGlob(pattern: "*LICENSE*").first else { return "" }
 
-    let licenseAtPath = try? String(contentsOfFile: licensePath, encoding:
-        .utf8)
+    let licenseAtPath = try? String(contentsOfFile: licensePath, encoding: .utf8)
     return licenseAtPath ?? ""
 }
 
 private func dictEntry(withKey key: String, value: String) -> String {
-    return  "<key>" + key + "</key>\n" +
-        "<string>" + value + "</string>\n"
+    return "<key>" + key + "</key>\n" + "<string>" + value + "</string>\n"
 }
 
 /// Return an entry for Acknowledgements.plist
@@ -44,15 +40,10 @@ public func AcknowledgmentEntry(forPodspec podSpec: PodSpec) -> [(String, String
     // If the license hasn't provided a text, read it in
     let text = license.text ?? ReadLicense(file: license.file)
     let type = license.type ?? ""
-    return [
-        ("Title", podSpec.name),
-        ("Type", "PSGroupSpecifier"),
-        ("License", type),
-        ("FooterText", text)
-    ]
+    return [("Title", podSpec.name), ("Type", "PSGroupSpecifier"), ("License", type), ("FooterText", text)]
 }
 
-fileprivate func escapeXMLEntities(for str: String) -> String {
+private func escapeXMLEntities(for str: String) -> String {
     /*
      Escaping[edit]
      XML provides escape facilities for including characters that are problematic to include directly. For example:
@@ -72,19 +63,14 @@ fileprivate func escapeXMLEntities(for str: String) -> String {
 
      &#0; is not permitted, however, because the null character is one of the control characters excluded from XML, even when using a numeric character reference.[14] An alternative encoding mechanism such as Base64 is needed to represent such characters.
      */
-    return str.replacingOccurrences(of: "&", with: "&amp;")
-        .replacingOccurrences(of: "<", with: "&lt;")
-        .replacingOccurrences(of: ">", with: "&gt;")
-        .replacingOccurrences(of: "'", with: "&apos;")
-        .replacingOccurrences(of: "\"", with: "&quot;")
-        .replacingOccurrences(of: "&#0;", with: "")
+    return str.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+        .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "'", with: "&apos;")
+        .replacingOccurrences(of: "\"", with: "&quot;").replacingOccurrences(of: "&#0;", with: "")
 }
 
 public func RenderAcknowledgmentEntry(entry: [(String, String)]) -> String {
     var result = "<dict>\n"
-    for (key, value) in entry {
-        result += dictEntry(withKey: key, value: escapeXMLEntities(for: value))
-    }
+    for (key, value) in entry { result += dictEntry(withKey: key, value: escapeXMLEntities(for: value)) }
     result += "</dict>"
     return result
 }
