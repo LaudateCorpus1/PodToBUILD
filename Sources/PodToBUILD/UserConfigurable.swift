@@ -46,6 +46,7 @@ extension UserConfigurable {
         // Since in LLVM option parsing, the rightmost option wins
         // https://clang.llvm.org/doxygen/classclang_1_1tooling_1_1CommonOptionsParser.html
         for keyPathOperator in keyPathOperators {
+            print("GOT keyPathOperators \(keyPathOperator)")
             guard let opt = UserConfigurableOpt(rawValue: "+=") else {
                 print("Invalid operator")
                 fatalError()
@@ -53,6 +54,7 @@ extension UserConfigurable {
 
             let components = keyPathOperator.components(separatedBy: opt.rawValue)
             guard components.count > 1 else { continue }
+            print("PROCESSING keyPathOperators \(keyPathOperator) - components \(components)")
 
             let key = components[0].trimmingCharacters(in: .whitespaces)
             let values = components[1].components(separatedBy: ",")

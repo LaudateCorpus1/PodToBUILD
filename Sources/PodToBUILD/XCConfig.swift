@@ -52,11 +52,15 @@ public struct XCConfigTransformer {
             return XCConfigTransformer(transformers: [SwiftApplicationExtensionAPIOnlyTransformer()])
         }
         return XCConfigTransformer(transformers: [
-            PassthroughTransformer(xcconfigKey: "OTHER_CFLAGS"), PassthroughTransformer(xcconfigKey: "OTHER_LDFLAGS"),
+            PassthroughTransformer(xcconfigKey: "OTHER_CFLAGS"),
+            PassthroughTransformer(xcconfigKey: "OTHER_LDFLAGS"),
             PassthroughTransformer(xcconfigKey: "OTHER_CPLUSPLUSFLAGS"),
-            HeaderSearchPathTransformer(externalName: externalName), CXXLibraryTransformer(enabled: sourceType == .cpp),
-            CXXLanguageStandardTransformer(enabled: sourceType == .cpp), PreprocessorDefinesTransformer(),
-            AllowNonModularIncludesInFrameworkModulesTransformer(), ApplicationExtensionAPIOnlyTransformer(),
+            HeaderSearchPathTransformer(externalName: externalName),
+            CXXLibraryTransformer(enabled: sourceType == .cpp),
+            CXXLanguageStandardTransformer(enabled: sourceType == .cpp),
+            PreprocessorDefinesTransformer(),
+            AllowNonModularIncludesInFrameworkModulesTransformer(),
+            ApplicationExtensionAPIOnlyTransformer(),
             PreCompilePrefixHeaderTransformer(),
         ])
     }
@@ -103,8 +107,8 @@ public struct HeaderSearchPathTransformer: XCConfigValueTransformer {
     init(externalName: String) { self.externalName = externalName }
 
     public func string(forXCConfigValue value: String) -> String? {
-        let cleaned =
-            value.replacingOccurrences(of: "$(PODS_TARGET_SRCROOT)", with: "\(getPodBaseDir())/\(externalName)")
+        let cleaned = value
+            .replacingOccurrences(of: "$(PODS_TARGET_SRCROOT)", with: "\(getPodBaseDir())/\(externalName)")
             .replacingOccurrences(of: "\"", with: "")
         return "-I\(cleaned)"
     }
@@ -113,7 +117,7 @@ public struct HeaderSearchPathTransformer: XCConfigValueTransformer {
 public struct PreprocessorDefinesTransformer: XCConfigValueTransformer {
     public var xcconfigKey: String { return "GCC_PREPROCESSOR_DEFINITIONS" }
 
-    public func string(forXCConfigValue value: String) -> String? { return "-D\(value)" }
+    public func string(forXCConfigValue value: String) -> String? { value.isEmpty ? nil : "-D\(value)" }
 }
 
 public struct AllowNonModularIncludesInFrameworkModulesTransformer: XCConfigValueTransformer {

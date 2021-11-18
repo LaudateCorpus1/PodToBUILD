@@ -170,21 +170,18 @@ extension GlobNode: Monoid {
 extension GlobNode {
     /// Evaluates the glob for all the sources on disk
     public func sourcesOnDisk() -> Set<String> {
-        let includedFiles = self.include.reduce(into: Set<String>()) { accum, next in
-            switch next {
-            case .left(let setVal): setVal.forEach { podGlob(pattern: $0).forEach { accum.insert($0) } }
-            case .right(let globVal): globVal.sourcesOnDisk().forEach { accum.insert($0) }
-            }
-        }
-
-        let excludedFiles = self.exclude.reduce(into: Set<String>()) { accum, next in
-            switch next {
-            case .left(let setVal): setVal.forEach { podGlob(pattern: $0).forEach { accum.insert($0) } }
-            case .right(let globVal): globVal.sourcesOnDisk().forEach { accum.insert($0) }
-            }
-        }
-        return includedFiles.subtracting(excludedFiles)
+        evalGlobs(include).subtracting(evalGlobs(exclude))
     }
 
-    func hasSourcesOnDisk() -> Bool { return sourcesOnDisk().count > 0 }
+    private func evalGlobs(_ globs: [Either<Set<String>, GlobNode>]) -> Set<String> {
+        globs.reduce(into: Set<String>()) { accum, next in
+            switch next {
+            // case .left(let setVal): accum.formUnion(setVal.flatMap { podGlob(pattern: $0) })
+            case .left(let setVal): accum.formUnion(setVal.flatMap(podGlob))
+            case .right(let globVal): accum.formUnion(globVal.sourcesOnDisk())
+            }
+        }
+    }
+
+    func hasSourcesOnDisk() -> Bool { sourcesOnDisk().count > 0 }
 }

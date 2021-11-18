@@ -201,7 +201,7 @@ public struct SwiftLibrary: BazelTarget {
             arguments: [
                 .basic(
                     [
-                        ":release": ["-Xcc", "-DPOD_CONFIGURATION_RELEASE=1"],
+                        "@rules_pods//BazelExtensions:release": ["-Xcc", "-DPOD_CONFIGURATION_RELEASE=1"],
                         "//conditions:default": [
                             "-enable-testing", "-DDEBUG", "-Xcc", "-DPOD_CONFIGURATION_DEBUG=1", "-Xcc", "-DDEBUG=1",
                         ],

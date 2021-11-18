@@ -62,30 +62,7 @@ struct EmptyDepPruneTransform: SkylarkConvertibleTransform {
         return convertibles.compactMap { convertible in
             // This returns a new objc library
             if let lib = convertible as? ObjcLibrary {
-                let prunedDeps = prune(deps: lib.deps, lib: lib)
-                return ObjcLibrary(
-                    name: lib.name,
-                    externalName: lib.externalName,
-                    sourceFiles: lib.sourceFiles,
-                    headers: lib.headers,
-                    headerName: lib.headerName,
-                    moduleMap: lib.moduleMap,
-                    prefixHeader: lib.prefixHeader,
-                    includes: lib.includes,
-                    sdkFrameworks: lib.sdkFrameworks,
-                    weakSdkFrameworks: lib.weakSdkFrameworks,
-                    sdkDylibs: lib.sdkDylibs,
-                    deps: prunedDeps,
-                    copts: lib.copts,
-                    features: lib.features,
-                    bundles: lib.bundles,
-                    resources: lib.resources,
-                    publicHeaders: lib.publicHeaders,
-                    nonArcSrcs: lib.nonArcSrcs,
-                    requiresArc: lib.requiresArc,
-                    isTopLevelTarget: lib.isTopLevelTarget
-                )
-
+                return ObjcLibrary(lib, deps: prune(deps: lib.deps, lib: lib))
             }
             if let lib = convertible as? SwiftLibrary {
                 // All swift libs require sources on disk

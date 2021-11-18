@@ -3,8 +3,14 @@ def _exec(repository_ctx, command):
         print("__EXEC", command)
     output = repository_ctx.execute(command)
     if output.return_code != 0:
-        print("__OUTPUT", output.return_code, output.stdout, output.stderr)
-        fail("Could not exec command " + " ".join(command))
+        fail(
+            "Could not exec command!\nCOMMAND: {}\nEXIT CODE: {}\nSTDOUT:\n{}\nSTDERR:\n{}".format(
+                " ".join(command),
+                output.return_code,
+                output.stdout,
+                output.stderr,
+            )
+        )
     elif repository_ctx.attr.trace:
         print("__OUTPUT", output.return_code, output.stdout, output.stderr)
 
@@ -97,13 +103,12 @@ def _impl(repository_ctx):
     url = repository_ctx.attr.url
     repo_tools_labels = repository_ctx.attr.repo_tools_labels
     install_script_tpl = repository_ctx.attr.install_script_tpl
-    tool_bin_by_name = {}
-    repo_tool_dict = repository_ctx.attr.repo_tool_dict
+    tool_bin_by_name = {
+        tool_name: repository_ctx.path(tool_label)
+        for tool_name, tool_label
+        in zip(repository_ctx.attr.repo_tools_names, repository_ctx.attr.repo_tools_labels)
+    }
     inhibit_warnings = repository_ctx.attr.inhibit_warnings
-
-    for tool_label in repo_tools_labels:
-        tool_name = repo_tool_dict[str(tool_label)]
-        tool_bin_by_name[tool_name] = repository_ctx.path(tool_label)
 
     if url.startswith("http") or url.startswith("https"):
         _fetch_remote_repo(
@@ -204,7 +209,7 @@ pod_repo_ = repository_rule(
         "strip_prefix": attr.string(),
         "user_options": attr.string_list(),
         "repo_tools_labels": attr.label_list(),
-        "repo_tool_dict": attr.string_dict(),
+        "repo_tools_names": attr.string_list(),
         "install_script_tpl": attr.string(),
         "inhibit_warnings": attr.bool(default=False, mandatory=True),
         "trace": attr.bool(default=False, mandatory=True),
@@ -222,9 +227,7 @@ def new_pod_repository(name,
                        strip_prefix="",
                        user_options=[],
                        install_script=None,
-                       repo_tools={
-                           "@rules_pods//bin:RepoTools": REPO_TOOL_NAME
-                       },
+                       repo_tools=None,
                        inhibit_warnings=False,
                        trace=False,
                        enable_modules=True,
@@ -304,9 +307,14 @@ def new_pod_repository(name,
          podspec_file = podspec_url
          podspec_url = None
 
-    tool_labels = []
-    for tool in repo_tools:
-        tool_labels.append(tool)
+    repo_tools = repo_tools or {}
+    repo_tools[REPO_TOOL_NAME] = "@rules_pods//bin:RepoTools"
+    # No native way to have a str -> label dict attr in Starlark, hack around this by storing the values in two lists.
+    repo_tools_labels = []
+    repo_tools_names = []
+    for tool_name, tool_label in repo_tools.items():
+        repo_tools_names.append(tool_name)
+        repo_tools_labels.append(tool_label)
     pod_repo_(
         name=name,
         target_name=name,
@@ -316,8 +324,8 @@ def new_pod_repository(name,
         user_options=user_options,
         strip_prefix=strip_prefix,
         install_script_tpl=install_script,
-        repo_tools_labels=tool_labels,
-        repo_tool_dict=repo_tools,
+        repo_tools_labels=repo_tools_labels,
+        repo_tools_names=repo_tools_names,
         inhibit_warnings=inhibit_warnings,
         trace=trace,
         enable_modules=enable_modules,

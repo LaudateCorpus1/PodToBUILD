@@ -9,10 +9,10 @@
 import Foundation
 
 enum SelectCase: String {
-    case ios = "iosCase"
-    case osx = "osxCase"
-    case watchos = "watchosCase"
-    case tvos = "tvosCase"
+    case ios = "@rules_pods//BazelExtensions:iosCase"
+    case osx = "@rules_pods//BazelExtensions:osxCase"
+    case watchos = "@rules_pods//BazelExtensions:watchosCase"
+    case tvos = "@rules_pods//BazelExtensions:tvosCase"
     case fallback = "//conditions:default"
 }
 
@@ -94,9 +94,9 @@ public struct MultiPlatform<T: AttrSetConstraint>: Monoid, SkylarkConvertible, E
             name: "select",
             arguments: [
                 .basic(
-                    (osx.map { [":\(SelectCase.osx.rawValue)": $0] }
-                        <+> watchos.map { [":\(SelectCase.watchos.rawValue)": $0] }
-                        <+> tvos.map { [":\(SelectCase.tvos.rawValue)": $0] }
+                    (osx.map { [SelectCase.osx.rawValue: $0] }
+                        <+> watchos.map { [SelectCase.watchos.rawValue: $0] }
+                        <+> tvos.map { [SelectCase.tvos.rawValue: $0] }
                         // TODO: Change to T.empty and move ios up when we support other platforms
                         <+> [SelectCase.fallback.rawValue: ios ?? T.empty] ?? [:])
                         .toSkylark()
@@ -176,15 +176,12 @@ public struct AttrSet<T: AttrSetConstraint>: Monoid, SkylarkConvertible, EmptyAw
         return multi(basic(self.basic), self.multi)
     }
 
-    public func trivialize<U>(into accum: U, _ transform: ((inout U, T) -> Void)) -> U {
-        var mutAccum = accum
-        self.basic.map { transform(&mutAccum, $0) }
-        let multi = self.multi
-        multi.ios.map { transform(&mutAccum, $0) }
-        multi.tvos.map { transform(&mutAccum, $0) }
-        multi.osx.map { transform(&mutAccum, $0) }
-        multi.watchos.map { transform(&mutAccum, $0) }
-        return mutAccum
+    public func trivialize<U>(into accum: inout U, _ transform: ((inout U, T) -> Void)) {
+        basic.map { transform(&accum, $0) }
+        multi.ios.map { transform(&accum, $0) }
+        multi.tvos.map { transform(&accum, $0) }
+        multi.osx.map { transform(&accum, $0) }
+        multi.watchos.map { transform(&accum, $0) }
     }
 
     public func zip<U>(_ other: AttrSet<U>) -> AttrSet<AttrTuple<T, U>> {

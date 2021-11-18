@@ -123,6 +123,7 @@ public enum PodSpecField: String {
     case vendoredLibraries = "vendored_libraries"
     case moduleName = "module_name"
     case headerDirectory = "header_dir"
+    case headerMappingsDir = "header_mappings_dir"
     case requiresArc = "requires_arc"
     case defaultSubspecs = "default_subspecs"
 }
@@ -145,6 +146,7 @@ public protocol PodSpecRepresentable {
     var vendoredFrameworks: [String] { get }
     var vendoredLibraries: [String] { get }
     var headerDirectory: String? { get }
+    var headerMappingsDir: String? { get }
     var xcconfig: [String: String]? { get }
     var moduleName: String? { get }
     var requiresArc: Either<Bool, [String]>? { get }
@@ -171,6 +173,7 @@ public struct PodSpec: PodSpecRepresentable {
     public let defaultSubspecs: [String]
 
     public let headerDirectory: String?
+    public let headerMappingsDir: String?
     public let moduleName: String?
     // requiresArc can be a bool
     // or it could be a list of pattern
@@ -245,6 +248,7 @@ public struct PodSpec: PodSpecRepresentable {
         vendoredLibraries = strings(fromJSON: fieldMap[.vendoredLibraries])
 
         headerDirectory = fieldMap[.headerDirectory] as? String
+        headerMappingsDir = fieldMap[.headerMappingsDir] as? String
         moduleName = fieldMap[.moduleName] as? String
         requiresArc =
             (fieldMap[.requiresArc] as? Bool).map { .left($0) }  // try a bool
@@ -298,6 +302,14 @@ public struct FallbackSpec {
             if !value.isEmpty { return value }
         }
         return AttrSet.empty
+    }
+    // Combine values
+    public func attr_inheriting<T>(_ keyPath: KeyPath<PodSpecRepresentable, T>) -> AttrSet<T> {
+        var result = AttrSet<T>.empty
+        for spec in specs {
+            result = result <> spec.attr(keyPath)
+        }
+        return result
     }
 }
 

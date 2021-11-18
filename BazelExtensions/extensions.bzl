@@ -277,7 +277,8 @@ def _gen_includes_impl(ctx):
     return [
         CcInfo(compilation_context=compilation_context),
         # objc_library deps requires an ObjcProvider
-        apple_common.new_objc_provider()
+        # TODO - May need to remove the arg here for Bazel 4+
+        apple_common.new_objc_provider(include=depset(includes))
     ]
 
 _gen_includes = rule(
@@ -390,7 +391,7 @@ _headermap = rule(
             executable=True,
             cfg="host",
             default=Label(
-                "//Vendor/rules_pods/BazelExtensions:headermap_builder"),
+                "@rules_pods//BazelExtensions:headermap_builder"),
         )
     },
     outputs={"headermap": "%{name}.hmap"}
