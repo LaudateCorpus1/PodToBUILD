@@ -94,9 +94,17 @@ public enum SerializedRepoToolsAction {
         // First arg is the path, we don't care about it
         // The right most option will be the winner.
         var options: [String: CLIArgumentType] = [
-            "--path": .string, "--user_option": .stringList, "--global_copt": .string, "--trace": .bool,
-            "--enable_modules": .bool, "--generate_module_map": .bool, "--generate_header_map": .bool,
-            "--vendorize": .bool, "--header_visibility": .string, "--child_path": .stringList,
+            "--path": .string,
+            "--user_option": .stringList,
+            "--global_copt": .string,
+            "--force_umbrella_header": .stringList,
+            "--trace": .bool,
+            "--enable_modules": .bool,
+            "--generate_module_map": .bool,
+            "--generate_header_map": .bool,
+            "--vendorize": .bool,
+            "--header_visibility": .string,
+            "--child_path": .stringList,
             "--is_dynamic_framework": .bool,
         ]
 
@@ -141,6 +149,7 @@ public enum SerializedRepoToolsAction {
             path: parsed["--path"]?.first as? String ?? ".",
             userOptions: parsed["--user_option"] as? [String] ?? [],
             globalCopts: parsed["--global_copt"] as? [String] ?? [],
+            forceUmbrellaHeader: parsed["--force_umbrella_header"] as? [String] ?? [],
             trace: parsed["--trace"]?.first as? Bool ?? false,
             enableModules: parsed["--enable_modules"]?.first as? Bool ?? false,
             generateModuleMap: parsed["--generate_module_map"]?.first as? Bool ?? false,
@@ -419,6 +428,7 @@ public enum RepoActions {
             var globResults: Set<String> = Set()
             var searchPaths: Set<String> = Set()
             var headerMappingsDirs: Set<String> = Set()
+            var headerDirNames: Set<String> = Set()
             buildFile.skylarkConvertibles.forEach { convertible in
                 if let lib = convertible as? ObjcLibrary {
                     // Collect all the search paths, there is no per platform header
@@ -428,6 +438,9 @@ public enum RepoActions {
                     searchPaths.insert(lib.name)
                     lib.headers.trivialize(into: &globResults) { $0.formUnion($1.sourcesOnDisk()) }
                     lib.headerMappingsDir.trivialize(into: &headerMappingsDirs, { if let dir = $1 { $0.insert(dir) } } )
+                    if let headerDirName = lib.headerDirectoryName {
+                        headerDirNames.insert(headerDirName)
+                    }
                 }
                 if let fwImport = convertible as? AppleFrameworkImport {
                     fwImport.frameworkImports.trivialize(into: &globResults) { accum, next in
@@ -445,19 +458,30 @@ public enum RepoActions {
                 fatalError("Should not be able to have multiple `header_mappings_dir`s, got \(headerMappingsDirs)")
             }
             if var headerMappingsDir = headerMappingsDirs.first {
+                if headerDirNames.count > 1 {
+                    fatalError("Should not be able to have multiple `header_dir`s, got \(headerDirNames)")
+                }
                 // If we have a header mappings dir, don't create <Subspec/...> dirs for each subspec, just expose
                 // the mapping dir
                 if headerMappingsDir == "." {
                     headerMappingsDir = ""
+                } else if headerMappingsDir.hasPrefix("./") {
+                    headerMappingsDir = String(headerMappingsDir[String.Index.init(encodedOffset: 2)...])
                 } else if !headerMappingsDir.hasSuffix("/") {
                     headerMappingsDir.append("/")
+                }
+                let baseDir: String;
+                if let headerDir = headerDirNames.first {
+                    baseDir = "\(headerDir)/"
+                } else {
+                    baseDir = ""
                 }
 
                 symlinkHeadersOnce(shell, globResults) { globResult in
                     if !globResult.starts(with: headerMappingsDir) {
                         fatalError("Found header `\(globResult)` outside of header mappings dir `\(headerMappingsDir)`!")
                     }
-                    return PodSupportSystemPublicHeaderDir + globResult.substring(from: String.Index.init(encodedOffset: headerMappingsDir.count))
+                    return PodSupportSystemPublicHeaderDir + baseDir + String(globResult[String.Index.init(encodedOffset: headerMappingsDir.count)...])
                 }
             } else {
                 // Otherwise create the <Subspec/...> for each subspec.

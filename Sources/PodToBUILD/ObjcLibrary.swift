@@ -91,7 +91,7 @@ struct FrameworkPlatformAndVariant : Hashable {
     }
 
     static func ==(lhs: FrameworkPlatformAndVariant, rhs: FrameworkPlatformAndVariant) -> Bool {
-        lhs.platform == rhs.platform && lhs.variant == lhs.variant
+        lhs.platform == rhs.platform && lhs.variant == rhs.variant
     }
 }
 
@@ -124,14 +124,17 @@ public struct AppleFrameworkImport: BazelTarget {
                         frameworkImportsValue.map { frameworkImport -> SkylarkNode in
                             if frameworkImport.hasSuffix(".xcframework") {
                                 // Parse the plist and generate the globs for the sub-frameworks.
+                                print("Starting xcframework")
                                 let (_, plutilResult) = shell.command("/usr/bin/plutil", arguments: ["-convert", "json", "-o", "-", frameworkImport + "/Info.plist"])
                                 let plistJsonAny = try! JSONSerialization.jsonObject(with: plutilResult.standardOutputData, options: [])
+                                print("Parsed json")
                                 let plistJson = plistJsonAny as! [String: Any]
                                 // TODO - Handle more cases
                                 let supportedPlatformAndVariantToBazelCondition = [
                                     FrameworkPlatformAndVariant(platform: "ios", variant: "simulator"): "@rules_pods//BazelExtensions:ios_simulator",
                                     FrameworkPlatformAndVariant(platform: "ios", variant: nil): "@rules_pods//BazelExtensions:ios_device",
                                 ]
+                                print("Defined framework")
                                 var selectDict: Dictionary<String, GlobNode> = Dictionary()
                                 for lib in (plistJson["AvailableLibraries"] as! [[String: Any]]) {
                                     let platformAndVariant = FrameworkPlatformAndVariant(
@@ -145,11 +148,15 @@ public struct AppleFrameworkImport: BazelTarget {
 
                                     let libId = lib["LibraryIdentifier"] as! String
                                     let libPath = lib["LibraryPath"] as! String
+                                    print("Adding to select dict")
                                     selectDict[bazelCondition] = GlobNode(include: [frameworkImport + "/" + libId + "/" + libPath + "/**"])
+                                    print("Added to select dict")
                                 }
+                                print("Done building select dict")
                                 // Put these in a filegroup so we don't have nested `select`s.
                                 let filegroupName = frameworkImport.replacingOccurrences(of: "/", with: "_")
                                 let selectCall = SkylarkNode.functionCall(name: "select", arguments: [SkylarkFunctionArgument.basic(selectDict.toSkylark())])
+                                print("Made select call")
                                 additionalFilegroups.append(
                                         SkylarkNode.functionCall(
                                                 name: "filegroup",
@@ -159,6 +166,7 @@ public struct AppleFrameworkImport: BazelTarget {
                                                 ]
                                         )
                                 )
+                                print("Added filegroup")
                                 return [":" + filegroupName].toSkylark()
                             } else {
                                 return GlobNode(include: [frameworkImport + "/**"]).toSkylark()
@@ -214,6 +222,7 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
     public let resources: AttrSet<GlobNode>
     public let publicHeaders: AttrSet<GlobNode>
     public let nonArcSrcs: AttrSet<GlobNode>
+    public let headerDirectoryName: String?
     public let headerMappingsDir: AttrSet<String?>
 
     // only used later in transforms
@@ -259,6 +268,7 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
         nonArcSrcs = nonArcSrcsOverride ?? existing.nonArcSrcs
         publicHeaders = existing.publicHeaders
         requiresArc = existing.requiresArc
+        headerDirectoryName = existing.headerDirectoryName
         headerMappingsDir = existing.headerMappingsDir
         isTopLevelTarget = existing.isTopLevelTarget
     }
@@ -298,7 +308,7 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
                 case let .left(value): return .left(value)
                 case let .right(value):
                     return .right(
-                        extractFiles(fromPattern: value, includingFileTypes: CppLikeFileTypes <> ObjcLikeFileTypes)
+                        extractFiles(fromPattern: value, includingFileTypes: includeFileTypes)
                     )
                 default: fatalError("null logic error")
                 }
@@ -311,33 +321,37 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
             isSplitDep: isSplitDep,
             sourceType: sourceType
         )
+        print("\(name) - implFiles=\(implFiles)")
         let options = GetBuildOptions()
         let externalName = getNamePrefix() + (parentSpecs.first?.name ?? spec.name)
 
-        let xcconfigFlags = XCConfigTransformer
-                .defaultTransformer(externalName: externalName, sourceType: sourceType)
-                .compilerFlags(for: fallbackSpec)
+        let transformer = XCConfigTransformer.defaultTransformer(externalName: externalName, sourceType: sourceType)
+        let localXcconfigFlags = transformer.localCompilerFlags(for: fallbackSpec)
+        let globalXcconfigFlags = transformer.globalCompilerFlags(for: fallbackSpec)
 
-        let xcconfigCopts = xcconfigFlags.filter { !$0.hasPrefix("-I") }
+        // TODO - Parse out more than just -I flags from globals (eg -D?)
+        let xcconfigCopts = (localXcconfigFlags + globalXcconfigFlags).filter { !$0.hasPrefix("-I") }
         let moduleName: AttrSet<String> = fallbackSpec.attr(\.moduleName).map { $0 ?? "" }
-        let headerDirectoryName: AttrSet<String?> = fallbackSpec.attr(\.headerDirectory)
+        let headerDirectoryAttr = fallbackSpec.attr(\.headerDirectory)
+        // Unwrap one layer of optional
+        headerDirectoryName = headerDirectoryAttr.basic ?? nil
         headerMappingsDir = fallbackSpec.attr(\.headerMappingsDir)
 
         let headerName =
             (moduleName.isEmpty ? nil : moduleName)
-            ?? (headerDirectoryName.basic == nil ? nil : headerDirectoryName.denormalize())
+            ?? (headerDirectoryAttr.basic == nil ? nil : headerDirectoryAttr.denormalize())
             ?? AttrSet<String>(value: externalName)
 
         let includePodHeaderDirs: (() -> [String]) = {
             if options.generateHeaderMap { return [] }
-            let value = spec.podTargetXcconfig?["USE_HEADERMAP"]
-            let include = value == nil || (value?.lowercased() != "no" && value?.lowercased() != "false")
-            guard include else { return [String]() }
+            // let value = spec.podTargetXcconfig?["USE_HEADERMAP"]
+            // let include = value == nil || (value?.lowercased() != "no" && value?.lowercased() != "false")
+            // guard include else { return [String]() }
 
             return [getPodBaseDir() + "/" + podName + "/" + PodSupportSystemPublicHeaderDir]
         }
 
-        systemIncludes = xcconfigFlags.filter { $0.hasPrefix("-I") }.map { String($0.dropFirst(2)) } + includePodHeaderDirs()
+        systemIncludes = globalXcconfigFlags.filter { $0.hasPrefix("-I") }.map { String($0.dropFirst(2)) } + includePodHeaderDirs()
         self.headerName = headerName
 
         // If the subspec has a prefix header than use that
@@ -425,7 +439,11 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
             <> AttrSet(basic: ["-iquote\(getPodBaseDir())/\(podName)/\(PodSupportSystemPublicHeaderDir)\(headerMappingsDir.isEmpty ? externalName : "")"])
             <> extraCopts
             <> AttrSet(basic: xcconfigCopts)
-            <> fallbackSpec.attr(\.compilerFlags)
+            <> fallbackSpec.attr(\.compilerFlags).map { rawCompilerFlags -> [String] in
+                rawCompilerFlags.map {
+                    rawCompilerFlag -> String in rawCompilerFlag.replacingOccurrences(of: "\n", with: " ")
+                }
+            }
 
         features = AttrSet.empty
 
@@ -456,6 +474,8 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
 
         includes = AttrSet.empty
     }
+
+    let usesGlobalCopts: Bool = true
 
     mutating func add(configurableKey: String, value: Any) {
         if let key = ObjcLibraryConfigurableKeys(rawValue: configurableKey) {
@@ -543,6 +563,7 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
                     return first + [second]
                 }
         }
+        print("\(name) - sourcesToExclude=\(sourcesToExclude)")
 
         let sourcesWithExcludes: AttrSet<GlobNode>
         sourcesWithExcludes = sourceFiles.zip(allExcludes)
@@ -555,44 +576,49 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
                 return GlobNode(include: accumSource.include, exclude: accumSource.exclude + append)
             }
 
+        /*
+        requires_arc true
+            normal
+        requires_arc false
+            anything not m, mm
+        requires_arc pattern
+            anything not m, mm + pattern
+           */
+
         let requiresArcValue: AttrSet<Either<Bool, [String]>?> = requiresArc
         let arcSources: AttrSet<GlobNode>
         arcSources = sourcesWithExcludes.zip(requiresArcValue)
             .map { attrTuple -> GlobNode in
                 let arcSources = attrTuple.first ?? GlobNode.empty
                 guard let requiresArcSources = attrTuple.second else { return arcSources }
+                let keptArcSources: Set<String>
                 switch requiresArcSources {
-                case let .left(boolValue):
-                    // Logically, this segment of the code is identical to the ruby
-                    // code. It would look like:
-                    // return boolValue ? arcSources : GlobNode.empty
-                    // however, bazel native rules don't allow cpp inside of the
-                    // `non_arc_sourcs`. The following code opts in cpp sources only.
-                    // the fobjc-arc _feature_ does not apply to the cpp language
-                    // inside of clang
-                    return boolValue
-                        ? arcSources
-                        : GlobNode(
-                            include: arcSources.include.map {
-                                $0.compactMapInclude { incPart -> String? in
-                                    let suffix = String(incPart.split(separator: ".").last!)
-                                    if suffix != "m" && suffix != "mm" { return incPart }
-                                    return nil
-                                }
-                            },
-                            exclude: arcSources.exclude
-                        )
-                case let .right(patternsValue):
-                    // In cocoapods this is:
-                    // As we don't have the union in Starlark, this implements the
-                    // union operator with glob ( see above comment )
-                    // ruby: paths_for_attribute(:requires_arc) & source_files
-                    return GlobNode(
-                        include: [.left(Set(patternsValue)), .right(arcSources)],
-                        exclude: []
-                    )
-                default: fatalError("null logic error")
+                    case .left(true):
+                        return arcSources
+                    case .left(false):
+                        keptArcSources = Set()
+                    case let .right(patternsValue):
+                        keptArcSources = Set(patternsValue)
+                    default: fatalError("null logic error")
                 }
+                // Logically, this segment of the code is identical to the ruby
+                // code. It would look like:
+                // return boolValue ? arcSources : GlobNode.empty
+                // however, bazel native rules don't allow cpp inside of the
+                // `non_arc_sourcs`. The following code opts in cpp sources only.
+                // the fobjc-arc _feature_ does not apply to the cpp language
+                // inside of clang
+                let cannotBeNoArc = arcSources.include.map {
+                    $0.compactMapInclude { incPart -> String? in
+                        let suffix = String(incPart.split(separator: ".").last!)
+                        if suffix != "m" && suffix != "mm" { return incPart }
+                        return nil
+                    }
+                }
+                return GlobNode(
+                        include: cannotBeNoArc + [.left(keptArcSources)],
+                        exclude: arcSources.exclude
+                )
             }
         let nonArcSources: AttrSet<GlobNode>
         nonArcSources = sourcesWithExcludes.zip(arcSources)

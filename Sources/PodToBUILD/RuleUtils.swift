@@ -74,7 +74,7 @@ public func getPodBaseDir() -> String {
 /// Expansion of $(location //target) is not supported in known Xcode generators
 public func getGenfileOutputBaseDir() -> String {
     let options = GetBuildOptions()
-    let basePath = options.vendorize ? "Vendor" : "external"
+    let basePath = getPodBaseDir()
     let podName = options.podName
     let parts = options.path.split(separator: "/")
     if options.path == "." || parts.count < 2 { return "\(basePath)/\(podName)" }

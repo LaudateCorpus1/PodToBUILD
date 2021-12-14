@@ -36,14 +36,18 @@ public struct XCConfigTransformer {
         // Case insensitve?
         guard let transformer = registry[key] else { throw XCConfigValueTransformerError.unimplemented }
 
-        let allValues = value.components(separatedBy: CharacterSet.whitespaces)
-        return allValues.filter { $0 != "$(inherited)" }
-            .compactMap { val in let podDir = getPodBaseDir()
+        return value
+            .components(separatedBy: CharacterSet.whitespaces)
+            .filter { $0 != "$(inherited)" }
+            .compactMap { val in
+                let podDir = getPodBaseDir()
                 let targetDir = getGenfileOutputBaseDir()
-                return transformer.string(forXCConfigValue: val)?.replacingOccurrences(of: "$(PODS_ROOT)", with: podDir)
+                return transformer.string(forXCConfigValue: val)?
+                    .replacingOccurrences(of: "$(PODS_ROOT)", with: podDir)
                     .replacingOccurrences(of: "${PODS_ROOT}", with: podDir)
                     .replacingOccurrences(of: "$(PODS_TARGET_SRCROOT)", with: targetDir)
                     .replacingOccurrences(of: "${PODS_TARGET_SRCROOT}", with: targetDir)
+                    .replacingOccurrences(of: "\n", with: " ")
             }
     }
 
@@ -174,10 +178,14 @@ public struct CXXLibraryTransformer: XCConfigValueTransformer {
 }
 
 extension XCConfigTransformer {
-    func compilerFlags(for spec: FallbackSpec) -> [String] {
+    func localCompilerFlags(for spec: FallbackSpec) -> [String] {
         /// TODO: This operation should operate on the AttrSet
-        return self.compilerFlags(forXCConfig: spec.attr(\.podTargetXcconfig).basic ?? [:])
-            + self.compilerFlags(forXCConfig: spec.attr(\.userTargetXcconfig).basic ?? [:])
-            + self.compilerFlags(forXCConfig: spec.attr(\.xcconfig).basic ?? [:])
+        compilerFlags(forXCConfig: spec.attr(\.podTargetXcconfig).basic ?? [:])
+    }
+
+    func globalCompilerFlags(for spec: FallbackSpec) -> [String] {
+        /// TODO: This operation should operate on the AttrSet
+        compilerFlags(forXCConfig: spec.attr(\.userTargetXcconfig).basic ?? [:])
+            + compilerFlags(forXCConfig: spec.attr(\.xcconfig).basic ?? [:])
     }
 }

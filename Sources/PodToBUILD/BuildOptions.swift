@@ -8,6 +8,7 @@
 public protocol BuildOptions {
     var userOptions: [String] { get }
     var globalCopts: [String] { get }
+    var forceUmbrellaHeader: [String] { get }
     var trace: Bool { get }
     var podName: String { get }
     var path: String { get }
@@ -32,6 +33,7 @@ public struct BasicBuildOptions: BuildOptions {
     public let path: String
     public let userOptions: [String]
     public let globalCopts: [String]
+    public let forceUmbrellaHeader: [String]
     public let trace: Bool
 
     public let enableModules: Bool
@@ -48,6 +50,7 @@ public struct BasicBuildOptions: BuildOptions {
         path: String = ".",
         userOptions: [String] = [],
         globalCopts: [String] = [],
+        forceUmbrellaHeader: [String] = [],
         trace: Bool = false,
         enableModules: Bool = false,
         generateModuleMap: Bool = false,
@@ -62,6 +65,7 @@ public struct BasicBuildOptions: BuildOptions {
         self.path = path
         self.userOptions = userOptions
         self.globalCopts = globalCopts
+        self.forceUmbrellaHeader = forceUmbrellaHeader
         self.trace = trace
         self.enableModules = enableModules
         self.generateModuleMap = generateModuleMap

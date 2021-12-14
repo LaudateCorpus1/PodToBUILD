@@ -137,6 +137,8 @@ def _impl(repository_ctx):
             entry.append("init")
             for user_option in repository_ctx.attr.user_options:
                 entry.extend(["--user_option", "'" + user_option + "'"])
+            for force_umbrella_header in repository_ctx.attr.force_umbrella_header:
+                entry.extend(["--force_umbrella_header", "'" + force_umbrella_header + "'"])
 
             if inhibit_warnings:
                 for global_copt in INHIBIT_WARNINGS_GLOBAL_COPTS:
@@ -208,6 +210,7 @@ pod_repo_ = repository_rule(
         "podspec_file": attr.label(),
         "strip_prefix": attr.string(),
         "user_options": attr.string_list(),
+        "force_umbrella_header": attr.string_list(),
         "repo_tools_labels": attr.label_list(),
         "repo_tools_names": attr.string_list(),
         "install_script_tpl": attr.string(),
@@ -226,6 +229,7 @@ def new_pod_repository(name,
                        podspec_url=None,
                        strip_prefix="",
                        user_options=[],
+                       force_umbrella_header=[],
                        install_script=None,
                        repo_tools=None,
                        inhibit_warnings=False,
@@ -322,6 +326,7 @@ def new_pod_repository(name,
         podspec_url=podspec_url,
         podspec_file=podspec_file,
         user_options=user_options,
+        force_umbrella_header=force_umbrella_header,
         strip_prefix=strip_prefix,
         install_script_tpl=install_script,
         repo_tools_labels=repo_tools_labels,

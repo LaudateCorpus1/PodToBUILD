@@ -285,6 +285,9 @@ public struct PodBuildFile: SkylarkConvertible {
 
         let objcModuleMap: ModuleMap?
         let hasSwift = packageSourceTypes.contains(.swift)
+        let forceUmbrellaHeader = options.forceUmbrellaHeader.contains(spec.name);
+        let useUmbrellaHeader = hasSwift || forceUmbrellaHeader;
+        print("Using umbrella for \(spec.name)? \(useUmbrellaHeader)")
         if hasSwift {
             // When there is swift and Objc
             // - generate a module map
@@ -299,14 +302,17 @@ public struct PodBuildFile: SkylarkConvertible {
             objcModuleMap = ModuleMap(
                 name: clangModuleName + "_module_map",
                 moduleName: clangModuleName,
-                headers: [publicHeaders]
+                headers: [publicHeaders],
+                umbrellaHeader: useUmbrellaHeader ? umbrellaHeader.name : nil
             )
         } else {
             objcModuleMap = nil
         }
 
         let moduleMapTargets: [BazelTarget] =
-            (hasSwift ? [swiftModuleMap, umbrellaHeader] : []) + (objcModuleMap != nil ? [objcModuleMap!] : [])
+            (hasSwift ? [swiftModuleMap] : [])
+                + (useUmbrellaHeader ? [umbrellaHeader] : [] )
+                + (objcModuleMap != nil ? [objcModuleMap!] : [])
         // If there is an extended module map, we need a dependency on the
         // swift lib to generate the -Swift header
         let extraDepNames = extraDeps.map { $0.name }

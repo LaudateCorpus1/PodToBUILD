@@ -28,6 +28,7 @@ enum UserConfigurableOpt: String {
 
 protocol UserConfigurable: BazelTarget {
     var name: String { get }
+    var usesGlobalCopts: Bool { get }
 
     /// Add a given value to a key
     mutating func add(configurableKey: String, value: Any)
@@ -40,8 +41,10 @@ protocol UserConfigurable: BazelTarget {
 extension UserConfigurable {
     func apply(keyPathOperators: [String], copts: [String]) -> Self {
         var copy = self
-        // First, apply all of the global options
-        copts.forEach { copy.add(configurableKey: "copts", value: $0) }
+        if usesGlobalCopts {
+            // First, apply all of the global options
+            copts.forEach { copy.add(configurableKey: "copts", value: $0) }
+        }
         // Explicit keyPathOperators override defaults
         // Since in LLVM option parsing, the rightmost option wins
         // https://clang.llvm.org/doxygen/classclang_1_1tooling_1_1CommonOptionsParser.html
@@ -94,13 +97,16 @@ enum UserConfigurableTransform: SkylarkConvertibleTransform {
         }
 
         let output: [BazelTarget] = convertibles.map { (inputConvertible: BazelTarget) in
-            guard let configurable = inputConvertible as? UserConfigurable else { return inputConvertible }
-
-            if let operators = operatorByTarget[configurable.name] {
-                return configurable.apply(keyPathOperators: operators, copts: copts)
-            } else {
-                return configurable.apply(keyPathOperators: [], copts: copts)
+            let name = inputConvertible.name
+            let operators = operatorByTarget[name]
+            guard let configurable = inputConvertible as? UserConfigurable else {
+                if operators != nil {
+                    fatalError("Set `user_options` for non-configurable target `\(name)` (has type `\(type(of: inputConvertible))`)")
+                }
+                return inputConvertible
             }
+
+            return configurable.apply(keyPathOperators: operators ?? [], copts: copts)
         }
         return output
     }
