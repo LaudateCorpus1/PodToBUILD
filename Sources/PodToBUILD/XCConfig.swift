@@ -36,14 +36,18 @@ public struct XCConfigTransformer {
         // Case insensitve?
         guard let transformer = registry[key] else { throw XCConfigValueTransformerError.unimplemented }
 
-        let allValues = value.components(separatedBy: CharacterSet.whitespaces)
-        return allValues.filter { $0 != "$(inherited)" }
-            .compactMap { val in let podDir = getPodBaseDir()
+        return value
+            .components(separatedBy: CharacterSet.whitespaces)
+            .filter { $0 != "$(inherited)" }
+            .compactMap { val in
+                let podDir = getPodBaseDir()
                 let targetDir = getGenfileOutputBaseDir()
-                return transformer.string(forXCConfigValue: val)?.replacingOccurrences(of: "$(PODS_ROOT)", with: podDir)
+                return transformer.string(forXCConfigValue: val)?
+                    .replacingOccurrences(of: "$(PODS_ROOT)", with: podDir)
                     .replacingOccurrences(of: "${PODS_ROOT}", with: podDir)
                     .replacingOccurrences(of: "$(PODS_TARGET_SRCROOT)", with: targetDir)
                     .replacingOccurrences(of: "${PODS_TARGET_SRCROOT}", with: targetDir)
+                    .replacingOccurrences(of: "\n", with: " ")
             }
     }
 
@@ -52,11 +56,15 @@ public struct XCConfigTransformer {
             return XCConfigTransformer(transformers: [SwiftApplicationExtensionAPIOnlyTransformer()])
         }
         return XCConfigTransformer(transformers: [
-            PassthroughTransformer(xcconfigKey: "OTHER_CFLAGS"), PassthroughTransformer(xcconfigKey: "OTHER_LDFLAGS"),
+            PassthroughTransformer(xcconfigKey: "OTHER_CFLAGS"),
+            PassthroughTransformer(xcconfigKey: "OTHER_LDFLAGS"),
             PassthroughTransformer(xcconfigKey: "OTHER_CPLUSPLUSFLAGS"),
-            HeaderSearchPathTransformer(externalName: externalName), CXXLibraryTransformer(enabled: sourceType == .cpp),
-            CXXLanguageStandardTransformer(enabled: sourceType == .cpp), PreprocessorDefinesTransformer(),
-            AllowNonModularIncludesInFrameworkModulesTransformer(), ApplicationExtensionAPIOnlyTransformer(),
+            HeaderSearchPathTransformer(externalName: externalName),
+            CXXLibraryTransformer(enabled: sourceType == .cpp),
+            CXXLanguageStandardTransformer(enabled: sourceType == .cpp),
+            PreprocessorDefinesTransformer(),
+            AllowNonModularIncludesInFrameworkModulesTransformer(),
+            ApplicationExtensionAPIOnlyTransformer(),
             PreCompilePrefixHeaderTransformer(),
         ])
     }
@@ -103,8 +111,8 @@ public struct HeaderSearchPathTransformer: XCConfigValueTransformer {
     init(externalName: String) { self.externalName = externalName }
 
     public func string(forXCConfigValue value: String) -> String? {
-        let cleaned =
-            value.replacingOccurrences(of: "$(PODS_TARGET_SRCROOT)", with: "\(getPodBaseDir())/\(externalName)")
+        let cleaned = value
+            .replacingOccurrences(of: "$(PODS_TARGET_SRCROOT)", with: "\(getPodBaseDir())/\(externalName)")
             .replacingOccurrences(of: "\"", with: "")
         return "-I\(cleaned)"
     }
@@ -113,7 +121,7 @@ public struct HeaderSearchPathTransformer: XCConfigValueTransformer {
 public struct PreprocessorDefinesTransformer: XCConfigValueTransformer {
     public var xcconfigKey: String { return "GCC_PREPROCESSOR_DEFINITIONS" }
 
-    public func string(forXCConfigValue value: String) -> String? { return "-D\(value)" }
+    public func string(forXCConfigValue value: String) -> String? { value.isEmpty ? nil : "-D\(value)" }
 }
 
 public struct AllowNonModularIncludesInFrameworkModulesTransformer: XCConfigValueTransformer {
@@ -170,10 +178,14 @@ public struct CXXLibraryTransformer: XCConfigValueTransformer {
 }
 
 extension XCConfigTransformer {
-    func compilerFlags(for spec: FallbackSpec) -> [String] {
+    func localCompilerFlags(for spec: FallbackSpec) -> [String] {
         /// TODO: This operation should operate on the AttrSet
-        return self.compilerFlags(forXCConfig: spec.attr(\.podTargetXcconfig).basic ?? [:])
-            + self.compilerFlags(forXCConfig: spec.attr(\.userTargetXcconfig).basic ?? [:])
-            + self.compilerFlags(forXCConfig: spec.attr(\.xcconfig).basic ?? [:])
+        compilerFlags(forXCConfig: spec.attr(\.podTargetXcconfig).basic ?? [:])
+    }
+
+    func globalCompilerFlags(for spec: FallbackSpec) -> [String] {
+        /// TODO: This operation should operate on the AttrSet
+        compilerFlags(forXCConfig: spec.attr(\.userTargetXcconfig).basic ?? [:])
+            + compilerFlags(forXCConfig: spec.attr(\.xcconfig).basic ?? [:])
     }
 }

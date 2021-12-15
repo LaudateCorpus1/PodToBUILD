@@ -81,6 +81,23 @@ public struct ConfigSetting: BazelTarget {
     }
 }
 
+/**
+ Represents where a framework in an xcframework can be run.
+ */
+struct FrameworkPlatformAndVariant : Hashable {
+    let platform: String
+    let variant: String?
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(platform)
+        hasher.combine(variant)
+    }
+
+    static func ==(lhs: FrameworkPlatformAndVariant, rhs: FrameworkPlatformAndVariant) -> Bool {
+        lhs.platform == rhs.platform && lhs.variant == rhs.variant
+    }
+}
+
 // https://github.com/bazelbuild/rules_apple/blob/818e795208ae3ca1cf1501205549d46e6bc88d73/doc/rules-general.md#apple_static_framework_import
 public struct AppleFrameworkImport: BazelTarget {
     public let name: String  // A unique name for this rule.
@@ -97,17 +114,64 @@ public struct AppleFrameworkImport: BazelTarget {
     // )
     public func toSkylark() -> SkylarkNode {
         let isDynamicFramework = GetBuildOptions().isDynamicFramework
+        let shell = SystemShellContext(trace: GetBuildOptions().trace)
+        var additionalFilegroups: Array<SkylarkNode> = [];
 
-        return SkylarkNode.functionCall(
+        let frameworkImportCall = SkylarkNode.functionCall(
             name: isDynamicFramework ? "apple_dynamic_framework_import" : "apple_static_framework_import",
             arguments: [SkylarkFunctionArgument]([
                 .named(name: "name", value: .string(name)),
                 .named(
                     name: "framework_imports",
-                    value: frameworkImports.map { GlobNode(include: Set($0.map { $0 + "/**" })) }.toSkylark()
+                    value: frameworkImports.map { frameworkImportsValue -> SkylarkNode in
+                        frameworkImportsValue.map { frameworkImport -> SkylarkNode in
+                            if frameworkImport.hasSuffix(".xcframework") {
+                                // Parse the plist and generate the globs for the sub-frameworks.
+                                let (_, plutilResult) = shell.command("/usr/bin/plutil", arguments: ["-convert", "json", "-o", "-", frameworkImport + "/Info.plist"])
+                                let plistJsonAny = try! JSONSerialization.jsonObject(with: plutilResult.standardOutputData, options: [])
+                                let plistJson = plistJsonAny as! [String: Any]
+                                // TODO - Handle more cases
+                                let supportedPlatformAndVariantToBazelCondition = [
+                                    FrameworkPlatformAndVariant(platform: "ios", variant: "simulator"): "@rules_pods//BazelExtensions:ios_simulator",
+                                    FrameworkPlatformAndVariant(platform: "ios", variant: nil): "@rules_pods//BazelExtensions:ios_device",
+                                ]
+                                var selectDict: Dictionary<String, GlobNode> = Dictionary()
+                                for lib in (plistJson["AvailableLibraries"] as! [[String: Any]]) {
+                                    let platformAndVariant = FrameworkPlatformAndVariant(
+                                            platform: lib["SupportedPlatform"] as! String,
+                                            variant: lib["SupportedPlatformVariant"] as? String
+                                    )
+                                    let maybeBazelCondition = supportedPlatformAndVariantToBazelCondition[platformAndVariant]
+                                    if maybeBazelCondition == nil { continue }
+                                    // No type narrowing in Swift???
+                                    let bazelCondition = maybeBazelCondition!
+
+                                    let libId = lib["LibraryIdentifier"] as! String
+                                    let libPath = lib["LibraryPath"] as! String
+                                    selectDict[bazelCondition] = GlobNode(include: [frameworkImport + "/" + libId + "/" + libPath + "/**"])
+                                }
+                                // Put these in a filegroup so we don't have nested `select`s.
+                                let filegroupName = frameworkImport.replacingOccurrences(of: "/", with: "_")
+                                let selectCall = SkylarkNode.functionCall(name: "select", arguments: [SkylarkFunctionArgument.basic(selectDict.toSkylark())])
+                                additionalFilegroups.append(
+                                        SkylarkNode.functionCall(
+                                                name: "filegroup",
+                                                arguments: [
+                                                    SkylarkFunctionArgument.named(name: "name", value: filegroupName.toSkylark()),
+                                                    SkylarkFunctionArgument.named(name: "srcs", value: selectCall)
+                                                ]
+                                        )
+                                )
+                                return [":" + filegroupName].toSkylark()
+                            } else {
+                                return GlobNode(include: [frameworkImport + "/**"]).toSkylark()
+                            }
+                        }.reduce(SkylarkNode.list([]), { $0 .+. $1 })
+                    }.toSkylark()
                 ), .named(name: "visibility", value: .list(["//visibility:public"])),
             ])
         )
+        return .lines(additionalFilegroups + [frameworkImportCall])
     }
 }
 
@@ -131,6 +195,8 @@ public struct ObjcImport: BazelTarget {
 
 public enum ObjcLibraryConfigurableKeys: String {
     case copts
+    case defines
+    case includes
     case deps
     case features
     case sdkFrameworks = "sdk_frameworks"
@@ -144,13 +210,15 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
     public let headers: AttrSet<GlobNode>
     public let headerName: AttrSet<String>
     public let moduleMap: ModuleMap?
-    public let includes: [String]
+    public let systemIncludes: [String]
     public let weakSdkFrameworks: AttrSet<[String]>
     public let sdkDylibs: AttrSet<[String]>
     public let bundles: AttrSet<[String]>
     public let resources: AttrSet<GlobNode>
     public let publicHeaders: AttrSet<GlobNode>
     public let nonArcSrcs: AttrSet<GlobNode>
+    public let headerDirectoryName: String?
+    public let headerMappingsDir: AttrSet<String?>
 
     // only used later in transforms
     public let requiresArc: AttrSet<Either<Bool, [String]>?>
@@ -159,54 +227,45 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
     public var sdkFrameworks: AttrSet<[String]>
     public var copts: AttrSet<[String]>
     public var deps: AttrSet<[String]>
+    public var defines: AttrSet<[String]>
+    public var includes: AttrSet<[String]>
     public var features: AttrSet<[String]>
 
     public let isTopLevelTarget: Bool
     public let externalName: String
     public let prefixHeader: AttrSet<String?>
 
+    // Copy constructor with overrides where they're needed. Feel free to add more overrides as the need arises.
     public init(
-        name: String,
-        externalName: String,
-        sourceFiles: AttrSet<GlobNode> = AttrSet.empty,
-        headers: AttrSet<GlobNode> = AttrSet.empty,
-        headerName: AttrSet<String> = AttrSet.empty,
-        moduleMap: ModuleMap? = nil,
-        prefixHeader: AttrSet<String?> = AttrSet.empty,
-        includes: [String] = [],
-        sdkFrameworks: AttrSet<[String]> = AttrSet.empty,
-        weakSdkFrameworks: AttrSet<[String]> = AttrSet.empty,
-        sdkDylibs: AttrSet<[String]> = AttrSet.empty,
-        deps: AttrSet<[String]> = AttrSet.empty,
-        copts: AttrSet<[String]> = AttrSet.empty,
-        features: AttrSet<[String]> = AttrSet.empty,
-        bundles: AttrSet<[String]> = AttrSet.empty,
-        resources: AttrSet<GlobNode> = AttrSet.empty,
-        publicHeaders: AttrSet<GlobNode> = AttrSet.empty,
-        nonArcSrcs: AttrSet<GlobNode> = AttrSet.empty,
-        requiresArc: AttrSet<Either<Bool, [String]>?> = AttrSet.empty,
-        isTopLevelTarget: Bool = false
+        _ existing: ObjcLibrary,
+        deps depsOverride: AttrSet<[String]>? = nil,
+        sourceFiles sourceFilesOverride: AttrSet<GlobNode>? = nil,
+        nonArcSrcs nonArcSrcsOverride: AttrSet<GlobNode>? = nil
     ) {
-        self.name = name
-        self.externalName = externalName
-        self.headerName = headerName
-        self.prefixHeader = prefixHeader
-        self.includes = includes
-        self.sourceFiles = sourceFiles
-        self.headers = headers
-        self.moduleMap = moduleMap
-        self.sdkFrameworks = sdkFrameworks
-        self.weakSdkFrameworks = weakSdkFrameworks
-        self.sdkDylibs = sdkDylibs
-        self.deps = deps
-        self.copts = copts
-        self.features = features
-        self.bundles = bundles
-        self.resources = resources
-        self.nonArcSrcs = nonArcSrcs
-        self.publicHeaders = publicHeaders
-        self.requiresArc = requiresArc
-        self.isTopLevelTarget = isTopLevelTarget
+        name = existing.name
+        externalName = existing.externalName
+        headerName = existing.headerName
+        prefixHeader = existing.prefixHeader
+        systemIncludes = existing.systemIncludes
+        sourceFiles = sourceFilesOverride ?? existing.sourceFiles
+        headers = existing.headers
+        moduleMap = existing.moduleMap
+        sdkFrameworks = existing.sdkFrameworks
+        weakSdkFrameworks = existing.weakSdkFrameworks
+        sdkDylibs = existing.sdkDylibs
+        deps = depsOverride ?? existing.deps
+        defines = existing.defines
+        includes = existing.includes
+        copts = existing.copts
+        features = existing.features
+        bundles = existing.bundles
+        resources = existing.resources
+        nonArcSrcs = nonArcSrcsOverride ?? existing.nonArcSrcs
+        publicHeaders = existing.publicHeaders
+        requiresArc = existing.requiresArc
+        headerDirectoryName = existing.headerDirectoryName
+        headerMappingsDir = existing.headerMappingsDir
+        isTopLevelTarget = existing.isTopLevelTarget
     }
 
     /// Helper to allocate with a podspec
@@ -244,7 +303,7 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
                 case let .left(value): return .left(value)
                 case let .right(value):
                     return .right(
-                        extractFiles(fromPattern: value, includingFileTypes: CppLikeFileTypes <> ObjcLikeFileTypes)
+                        extractFiles(fromPattern: value, includingFileTypes: includeFileTypes)
                     )
                 default: fatalError("null logic error")
                 }
@@ -260,29 +319,29 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
         let options = GetBuildOptions()
         let externalName = getNamePrefix() + (parentSpecs.first?.name ?? spec.name)
 
-        let xcconfigFlags = XCConfigTransformer.defaultTransformer(externalName: externalName, sourceType: sourceType)
-            .compilerFlags(for: fallbackSpec)
+        let transformer = XCConfigTransformer.defaultTransformer(externalName: externalName, sourceType: sourceType)
+        let localXcconfigFlags = transformer.localCompilerFlags(for: fallbackSpec)
+        let globalXcconfigFlags = transformer.globalCompilerFlags(for: fallbackSpec)
 
-        let xcconfigCopts = xcconfigFlags.filter { !$0.hasPrefix("-I") }
+        // TODO - Parse out more than just -I flags from globals (eg -D?)
+        let xcconfigCopts = localXcconfigFlags + globalXcconfigFlags.filter { !$0.hasPrefix("-I") }
         let moduleName: AttrSet<String> = fallbackSpec.attr(\.moduleName).map { $0 ?? "" }
-        let headerDirectoryName: AttrSet<String?> = fallbackSpec.attr(\.headerDirectory)
+        let headerDirectoryAttr = fallbackSpec.attr(\.headerDirectory)
+        // Unwrap one layer of optional
+        headerDirectoryName = headerDirectoryAttr.basic ?? nil
+        headerMappingsDir = fallbackSpec.attr(\.headerMappingsDir)
 
-        let headerName =
+        headerName =
             (moduleName.isEmpty ? nil : moduleName)
-            ?? (headerDirectoryName.basic == nil ? nil : headerDirectoryName.denormalize())
+            ?? (headerDirectoryAttr.basic == nil ? nil : headerDirectoryAttr.denormalize())
             ?? AttrSet<String>(value: externalName)
 
-        let includePodHeaderDirs: (() -> [String]) = {
-            if options.generateHeaderMap { return [] }
-            let value = spec.podTargetXcconfig?["USE_HEADERMAP"]
-            let include = value == nil || (value?.lowercased() != "no" && value?.lowercased() != "false")
-            guard include else { return [String]() }
+        let includePodHeaderDirs =
+            options.generateHeaderMap
+                ? []
+                : [getPodBaseDir() + "/" + podName + "/" + PodSupportSystemPublicHeaderDir];
 
-            return [getPodBaseDir() + "/" + podName + "/" + PodSupportSystemPublicHeaderDir]
-        }
-
-        includes = xcconfigFlags.filter { $0.hasPrefix("-I") }.map { String($0.dropFirst(2)) } + includePodHeaderDirs()
-        self.headerName = headerName
+        systemIncludes = globalXcconfigFlags.filter { $0.hasPrefix("-I") }.map { String($0.dropFirst(2)) } + includePodHeaderDirs
 
         // If the subspec has a prefix header than use that
         let prefixHeaderFile: AttrSet<Either<Bool, String>?> = spec.attr(\.prefixHeaderFile)
@@ -318,17 +377,21 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
 
         let basePublicHeaders = sourceHeaders.zip(publicHeaders).map { return Set($0.second ?? $0.first ?? []) }
         // lib/cocoapods/sandbox/file_accessor.rb
-        self.publicHeaders = basePublicHeaders.zip(privateHeadersVal)
+        self.publicHeaders = basePublicHeaders.zip(privateHeadersVal <> allExcludes)
             .map { GlobNode(include: .left($0.first ?? Set()), exclude: .left(Set($0.second ?? []))) }
 
         // It's possible to use preserve_paths for header includes
         // also, preserve path may be used for a file, so we'd need to touch
         // the FS here to actually find out.
-        let preservePaths = fallbackSpec.attr(\.preservePaths).unpackToMulti()
-            .map { $0.filter { !$0.contains("LICENSE") } }
+        let preservePaths = fallbackSpec
+                .attr(\.preservePaths)
+                .unpackToMulti()
+                .map { $0.filter { !$0.contains("LICENSE") } }
         let allSpecHeadersList: AttrSet<[String]> =
-            sourceHeaders <> privateHeaders
-            <> extractFiles(fromPattern: preservePaths, includingFileTypes: HeaderFileTypes) <> publicHeaders
+            sourceHeaders
+                    <> privateHeaders
+                    <> extractFiles(fromPattern: preservePaths, includingFileTypes: HeaderFileTypes)
+                    <> publicHeaders
 
         let allSpecHeaders = allSpecHeadersList.map { Set($0) }
         let headerExcludes = extractFiles(fromPattern: allExcludes, includingFileTypes: HeaderFileTypes).map { Set($0) }
@@ -344,7 +407,7 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
         sdkDylibs = fallbackSpec.attr(\.libraries)
 
         // Lift the deps to multiplatform, then get the names of these deps.
-        let mpDeps = fallbackSpec.attr(\.dependencies)
+        let mpDeps = fallbackSpec.attr_inheriting(\.dependencies)
         let mpPodSpecDeps = mpDeps.map { $0.map { getDependencyName(fromPodDepName: $0, podName: podName) } }
 
         let extraDepNames = extraDeps.map { bazelLabel(fromString: ":\($0)") }
@@ -361,8 +424,15 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
         // Note: we need to include the gen dir here, unfortunately.
         // This is a hack to deal with the swift header not being in the public
         // interface. Ideally, we have a non cached headermap.
-        copts = AttrSet(basic: moduleMap != nil ? ["-I$(GENDIR)/\(getGenfileOutputBaseDir())/"] : []) <> extraCopts
-            <> AttrSet(basic: xcconfigCopts) <> fallbackSpec.attr(\.compilerFlags)
+        copts = AttrSet(basic: moduleMap != nil ? ["-I$(GENDIR)/\(getGenfileOutputBaseDir())/"] : [])
+            <> AttrSet(basic: ["-iquote\(getPodBaseDir())/\(podName)/\(PodSupportSystemPublicHeaderDir)\(headerMappingsDir.isEmpty ? externalName : "")"])
+            <> extraCopts
+            <> AttrSet(basic: xcconfigCopts)
+            <> fallbackSpec.attr(\.compilerFlags).map { rawCompilerFlags -> [String] in
+                rawCompilerFlags.map {
+                    rawCompilerFlag -> String in rawCompilerFlag.replacingOccurrences(of: "\n", with: " ")
+                }
+            }
 
         features = AttrSet.empty
 
@@ -371,7 +441,6 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
             (spec.attr(\.resources)
             .map { (strArr: [String]) -> [String] in
                 strArr.filter { (str: String) -> Bool in !str.hasSuffix(".bundle") }
-
             })
             .map(extractResources)
         resources = resourceFiles.map { GlobNode(include: Set($0)) }
@@ -388,18 +457,28 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
             }
 
         bundles = prebuiltBundles <> resourceBundles
+
+        // TODO - *Maybe* populate with GCC_PREPROCESSOR_DEFINITIONS? The ones from the user_target_xcconfig probably.
+        defines = AttrSet.empty
+
+        includes = AttrSet.empty
     }
+
+    let usesGlobalCopts: Bool = true
 
     mutating func add(configurableKey: String, value: Any) {
         if let key = ObjcLibraryConfigurableKeys(rawValue: configurableKey) {
             switch key {
-            case .copts: if let value = value as? String { self.copts = self.copts <> AttrSet(basic: [value]) }
+            case .copts: if let value = value as? String { copts = copts <> AttrSet(basic: [value]) }
+            case .defines: if let value = value as? String { defines = defines <> AttrSet(basic: [value]) }
+            case .includes: if let value = value as? String { includes = includes <> AttrSet(basic: [value]) }
             case .sdkFrameworks:
-                if let value = value as? String { self.sdkFrameworks = self.sdkFrameworks <> AttrSet(basic: [value]) }
-            case .deps: if let value = value as? String { self.deps = self.deps <> AttrSet(basic: [value]) }
-            case .features: if let value = value as? String { self.features = self.features <> AttrSet(basic: [value]) }
+                if let value = value as? String { sdkFrameworks = sdkFrameworks <> AttrSet(basic: [value]) }
+            case .deps: if let value = value as? String { deps = deps <> AttrSet(basic: [value]) }
+            case .features: if let value = value as? String { features = features <> AttrSet(basic: [value]) }
             }
-
+        } else {
+            fatalError("Trying to set unknown user-configurable key: `\(configurableKey)`")
         }
     }
 
@@ -485,43 +564,52 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
                 return GlobNode(include: accumSource.include, exclude: accumSource.exclude + append)
             }
 
+        /*
+        requires_arc true
+            normal
+        requires_arc false
+            anything not m, mm
+        requires_arc pattern
+            anything not m, mm + pattern
+           */
+
         let requiresArcValue: AttrSet<Either<Bool, [String]>?> = requiresArc
         let arcSources: AttrSet<GlobNode>
         arcSources = sourcesWithExcludes.zip(requiresArcValue)
-            .map { attrTuple -> GlobNode in let arcSources = attrTuple.first ?? GlobNode.empty
+            .map { attrTuple -> GlobNode in
+                let arcSources = attrTuple.first ?? GlobNode.empty
                 guard let requiresArcSources = attrTuple.second else { return arcSources }
+                let keptArcSources: Set<String>
                 switch requiresArcSources {
-                case let .left(boolValue):
-                    // Logically, this segment of the code is identical to the ruby
-                    // code. It would look like:
-                    // return boolValue ? arcSources : GlobNode.empty
-                    // however, bazel native rules don't allow cpp inside of the
-                    // `non_arc_sourcs`. The following code opts in cpp sources only.
-                    // the fobjc-arc _feature_ does not apply to the cpp language
-                    // inside of clang
-                    return boolValue
-                        ? arcSources
-                        : GlobNode(
-                            include: arcSources.include.map {
-                                $0.compactMapInclude { incPart -> String? in
-                                    let suffix = String(incPart.split(separator: ".").last!)
-                                    if suffix == "cpp" || suffix == "cxx" || suffix == "cc" { return incPart }
-                                    return nil
-                                }
-                            },
-                            exclude: arcSources.exclude
-                        )
-                case let .right(patternsValue):
-                    // In cocoapods this is:
-                    // As we don't have the union in Starlark, this implements the
-                    // union operator with glob ( see above comment )
-                    // ruby: paths_for_attribute(:requires_arc) & source_files
-                    return GlobNode(
-                        include: .left(Set(patternsValue)),
-                        exclude: .right(GlobNode(include: [.left(Set(patternsValue))], exclude: [.right(arcSources)]))
-                    )
-                default: fatalError("null logic error")
+                    case .left(true):
+                        // If everything requires arc, just return everything here.
+                        return arcSources
+                    case .left(false):
+                        // See below; we're not keeping any .m or .mm files.
+                        keptArcSources = Set()
+                    case let .right(patternsValue):
+                        // See below; we're keeping the explicitly listed .m or .mm files
+                        keptArcSources = Set(patternsValue)
+                    default: fatalError("null logic error")
                 }
+                // Logically, this segment of the code is identical to the ruby
+                // code. It would look like:
+                // return boolValue ? arcSources : GlobNode.empty
+                // however, bazel native rules don't allow cpp inside of the
+                // `non_arc_srcs`. The following code opts in cpp sources only.
+                // the fobjc-arc _feature_ does not apply to the cpp language
+                // inside of clang
+                let cannotBeNoArc = arcSources.include.map {
+                    $0.compactMapInclude { incPart -> String? in
+                        let suffix = String(incPart.split(separator: ".").last!)
+                        if suffix != "m" && suffix != "mm" { return incPart }
+                        return nil
+                    }
+                }
+                return GlobNode(
+                        include: cannotBeNoArc + [.left(keptArcSources)],
+                        exclude: arcSources.exclude
+                )
             }
         let nonArcSources: AttrSet<GlobNode>
         nonArcSources = sourcesWithExcludes.zip(arcSources)
@@ -549,30 +637,7 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
                 )
             }
 
-        let lib = self
-        return ObjcLibrary(
-            name: lib.name,
-            externalName: lib.externalName,
-            sourceFiles: arcSources,
-            headers: lib.headers,
-            headerName: lib.headerName,
-            moduleMap: lib.moduleMap,
-            prefixHeader: lib.prefixHeader,
-            includes: lib.includes,
-            sdkFrameworks: lib.sdkFrameworks,
-            weakSdkFrameworks: lib.weakSdkFrameworks,
-            sdkDylibs: lib.sdkDylibs,
-            deps: deps,
-            copts: lib.copts,
-            features: lib.features,
-            bundles: lib.bundles,
-            resources: lib.resources,
-            publicHeaders: lib.publicHeaders,
-            nonArcSrcs: nonArcSources,
-            requiresArc: lib.requiresArc,
-            isTopLevelTarget: lib.isTopLevelTarget
-        )
-
+        return ObjcLibrary(self, sourceFiles: arcSources, nonArcSrcs: nonArcSources)
     }
 
     // MARK: BazelTarget
@@ -724,42 +789,44 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
         let baseHeaders: [String] = isTopLevelTarget ? [":" + externalName + "_hdrs"] : [":" + name + "_union_hdrs"]
         // TODO: for header_dir, there should be an additonal namespace added in here.
         // TODO: Move ad-hoc bazel targets from ObjcLibrary to BuildFile
-        inlineSkylark.append(
-            .functionCall(
-                name: "headermap",
-                arguments: [
-                    .named(name: "name", value: (name + "_hmap").toSkylark()),
-                    .named(name: "namespace", value: moduleName.toSkylark()),
-                    .named(
-                        name: "hdrs",
-                        value: [(getNamePrefix() + options.podName + "_package_hdrs")].toSkylark()
-                            .+. baseHeaders.toSkylark()
-                    ),
+        if options.generateHeaderMap {
+            inlineSkylark.append(
+                .functionCall(
+                    name: "headermap",
+                    arguments: [
+                        .named(name: "name", value: (name + "_hmap").toSkylark()),
+                        .named(name: "namespace", value: moduleName.toSkylark()),
+                        .named(
+                            name: "hdrs",
+                            value: [(getNamePrefix() + options.podName + "_package_hdrs")].toSkylark()
+                                .+. baseHeaders.toSkylark()
+                        ),
 
-                    .named(
-                        name: "deps",
-                        value:
-                            deps.map {
-                                Set($0)
-                                    .filter {
-                                        !($0.hasSuffix("_swift") || $0.hasSuffix("_VendoredFrameworks")
-                                            || $0.hasSuffix("_VendoredLibraries"))
-                                    }
-                                    .map { $0.hasPrefix(":") ? $0 + "_hmap" : $0 }
-                            }
-                            .sorted(by: (<)).toSkylark()
-                    ), .named(name: "visibility", value: ["//visibility:public"].toSkylark()),
-                ]
+                        .named(
+                            name: "deps",
+                            value:
+                                deps.map {
+                                    Set($0)
+                                        .filter {
+                                            !($0.hasSuffix("_swift") || $0.hasSuffix("_VendoredFrameworks")
+                                                || $0.hasSuffix("_VendoredLibraries"))
+                                        }
+                                        .map { $0.hasPrefix(":") ? $0 + "_hmap" : $0 }
+                                }
+                                .sorted(by: (<)).toSkylark()
+                        ), .named(name: "visibility", value: ["//visibility:public"].toSkylark()),
+                    ]
+                )
             )
-        )
+        }
 
-        if lib.includes.count > 0 {
+        if lib.systemIncludes.count > 0 {
             inlineSkylark.append(
                 .functionCall(
                     name: "gen_includes",
                     arguments: [
                         .named(name: "name", value: (name + "_includes").toSkylark()),
-                        .named(name: "include", value: includes.toSkylark()),
+                        .named(name: "include", value: systemIncludes.toSkylark()),
                     ]
                 )
             )
@@ -805,7 +872,7 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
 
         var allDeps: SkylarkNode = SkylarkNode.empty
         if !lib.deps.isEmpty { allDeps = lib.deps.map { Set($0).sorted(by: (<)) }.toSkylark() }
-        if lib.includes.count > 0 { allDeps = allDeps .+. [":\(name)_includes"].toSkylark() }
+        if lib.systemIncludes.count > 0 { allDeps = allDeps .+. [":\(name)_includes"].toSkylark() }
         if options.generateHeaderMap { allDeps = allDeps .+. [":" + name + "_hmap"].toSkylark() }
         if let moduleMap = lib.moduleMap {
             // Note that this propagates the module map include
@@ -816,49 +883,38 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
 
         if !lib.features.isEmpty { libArguments.append(.named(name: "features", value: lib.features.toSkylark())) }
 
+        if !lib.defines.isEmpty {
+            libArguments.append(.named(name: "defines", value: lib.defines.toSkylark()))
+        }
+        if !lib.includes.isEmpty {
+            libArguments.append(.named(name: "includes", value: lib.includes.toSkylark()))
+        }
+
         let buildConfigDependenctCOpts: SkylarkNode = .functionCall(
             name: "select",
             arguments: [
                 .basic(
                     [
-                        ":release": ["-DPOD_CONFIGURATION_RELEASE=1", "-DNS_BLOCK_ASSERTIONS=1"],
+                        "@rules_pods//BazelExtensions:release": ["-DPOD_CONFIGURATION_RELEASE=1", "-DNS_BLOCK_ASSERTIONS=1"],
                         "//conditions:default": ["-DDEBUG=1", "-DPOD_CONFIGURATION_DEBUG=1"],
                     ]
                     .toSkylark()
                 )
             ]
         )
-        let getPodIQuotes = { () -> [String] in
-            if options.generateHeaderMap {
-                return ["-I$(GENDIR)/\(getGenfileOutputBaseDir())/" + lib.name + "_hmap.hmap", "-I."]
-            }
-            let podInclude = lib.includes.first(where: { $0.contains(PodSupportSystemPublicHeaderDir) })
-            guard podInclude != nil else { return [] }
-
-            let headerDirs = self.headerName.map { PodSupportSystemPublicHeaderDir + "\($0)/" }
-            let headerSearchPaths: Set<String> = Set(
-                headerDirs.fold(
-                    basic: { str in Set<String>([str].compactMap { $0 }) },
-                    multi: { (result: Set<String>, multi: MultiPlatform<String>) -> Set<String> in
-                        result.union([multi.ios, multi.osx, multi.watchos, multi.tvos].compactMap { $0 })
-                    }
-                )
-            )
-            return headerSearchPaths.sorted(by: <)
-                .reduce([String]()) { accum, searchPath in
-                    // Assume that the podspec matches the name of the directory.
-                    // it is a convention that these are 1 in the same.
-                    let podName = GetBuildOptions().podName
-                    return accum + ["-I\(getPodBaseDir())/\(podName)/\(searchPath)"]
-                }
-        }
-
+        let hmapInclude = options.generateHeaderMap
+            ? ["-I$(GENDIR)/\(getGenfileOutputBaseDir())/" + lib.name + "_hmap.hmap", "-I."]
+            : [];
         let modulesCopts = enableModules ? ["-fmodule-name=" + moduleName, "-fmodules"] : []
         libArguments.append(
             .named(
                 name: "copts",
-                value: (lib.copts.toSkylark() .+. buildConfigDependenctCOpts .+. getPodIQuotes().toSkylark())
-                    <> modulesCopts.toSkylark()
+                value: (
+                    lib.copts.toSkylark()
+                        .+. buildConfigDependenctCOpts
+                        .+. hmapInclude.toSkylark()
+                        .+. modulesCopts.toSkylark()
+                )
             )
         )
 

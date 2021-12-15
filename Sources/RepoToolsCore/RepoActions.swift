@@ -94,9 +94,17 @@ public enum SerializedRepoToolsAction {
         // First arg is the path, we don't care about it
         // The right most option will be the winner.
         var options: [String: CLIArgumentType] = [
-            "--path": .string, "--user_option": .stringList, "--global_copt": .string, "--trace": .bool,
-            "--enable_modules": .bool, "--generate_module_map": .bool, "--generate_header_map": .bool,
-            "--vendorize": .bool, "--header_visibility": .string, "--child_path": .stringList,
+            "--path": .string,
+            "--user_option": .stringList,
+            "--global_copt": .string,
+            "--force_umbrella_header": .stringList,
+            "--trace": .bool,
+            "--enable_modules": .bool,
+            "--generate_module_map": .bool,
+            "--generate_header_map": .bool,
+            "--vendorize": .bool,
+            "--header_visibility": .string,
+            "--child_path": .stringList,
             "--is_dynamic_framework": .bool,
         ]
 
@@ -141,6 +149,7 @@ public enum SerializedRepoToolsAction {
             path: parsed["--path"]?.first as? String ?? ".",
             userOptions: parsed["--user_option"] as? [String] ?? [],
             globalCopts: parsed["--global_copt"] as? [String] ?? [],
+            forceUmbrellaHeader: parsed["--force_umbrella_header"] as? [String] ?? [],
             trace: parsed["--trace"]?.first as? Bool ?? false,
             enableModules: parsed["--enable_modules"]?.first as? Bool ?? false,
             generateModuleMap: parsed["--generate_module_map"]?.first as? Bool ?? false,
@@ -346,6 +355,23 @@ public enum RepoActions {
             path: workspaceRootPath,
             childPaths: buildOptions.childPaths
         )
+
+        // NOTE! This is assuming the prepare command is hermetic, which, well may not be a valid assumption.
+        // TODO - Possibly force pods to opt into this with some sort of `prepare_command_verified_hermetic = True`?
+        if let prepareCommand = (JSONPodspec["prepare_command"] as? String) {
+            // TODO - Ideally we just don't capture the stdout/stderr here.
+            // Can't use shellOut since that uses /bin/sh, whereas some scripts assume bash features.
+            let result = shell.command("/bin/bash", arguments: ["-c", prepareCommand])
+            if result.terminationStatus != 0 {
+                fatalError(
+                    "Failed to run `prepare_command`!"
+                    + "\nRETURN CODE: \(result.terminationStatus)"
+                    + "\nSTDOUT:\n\(String(decoding: result.standardOutputData, as: UTF8.self))"
+                    + "\nSTDERR:\n\(String(decoding: result.standardErrorData, as: UTF8.self))"
+                )
+            }
+        }
+
         var childInfoIter = buildOptions.childPaths.makeIterator()
         // Batch create several symlinks for Pod style includes
         let currentDirectoryPath = FileManager.default.currentDirectoryPath
@@ -401,48 +427,70 @@ public enum RepoActions {
         if buildOptions.generateHeaderMap == false {
             var globResults: Set<String> = Set()
             var searchPaths: Set<String> = Set()
+            var headerMappingsDirs: Set<String> = Set()
+            var headerDirNames: Set<String> = Set()
             buildFile.skylarkConvertibles.forEach { convertible in
                 if let lib = convertible as? ObjcLibrary {
                     // Collect all the search paths, there is no per platform header
                     // directories in cocoapods, and do an O(N) operation
-                    searchPaths.formUnion(lib.headerName.trivialize(into: Set<String>()) { $0.insert($1) })
+                    lib.headerName.trivialize(into: &searchPaths) { $0.insert($1) }
                     searchPaths.insert(lib.externalName)
                     searchPaths.insert(lib.name)
-                    globResults.formUnion(
-                        lib.headers.trivialize(into: Set<String>()) { $0.formUnion($1.sourcesOnDisk()) }
-                    )
-                }
-                if let fwImport = convertible as? AppleFrameworkImport {
-                    globResults.formUnion(
-                        fwImport.frameworkImports.trivialize(into: Set<String>()) { accum, next in
-                            let HeaderFileTypes = Set([".h", ".hpp", ".hxx"])
-                            let imports = next.reduce(into: Set<String>()) { accum, nextImport in
-                                accum.formUnion(Set(HeaderFileTypes.map { nextImport + "/**/*" + $0 }))
-                            }
-                            let headersDir = GlobNode(include: imports)
-                            accum.formUnion(headersDir.sourcesOnDisk())
-                        }
-                    )
-                }
-            }
-            searchPaths.forEach { searchPath in
-                defer {
-                    guard FileManager.default.changeCurrentDirectoryPath(currentDirectoryPath) else {
-                        fatalError("Can't change path back to original directory")
+                    lib.headers.trivialize(into: &globResults) { $0.formUnion($1.sourcesOnDisk()) }
+                    lib.headerMappingsDir.trivialize(into: &headerMappingsDirs, { if let dir = $1 { $0.insert(dir) } } )
+                    if let headerDirName = lib.headerDirectoryName {
+                        headerDirNames.insert(headerDirName)
                     }
                 }
-
-                let linkPath = PodSupportSystemPublicHeaderDir + searchPath
-                shell.dir(linkPath)
-                guard FileManager.default.changeCurrentDirectoryPath(linkPath) else {
-                    print("WARNING: Can't change path while creating symlink: " + linkPath)
-                    return
+                if let fwImport = convertible as? AppleFrameworkImport {
+                    fwImport.frameworkImports.trivialize(into: &globResults) { accum, next in
+                        let HeaderFileTypes = Set([".h", ".hpp", ".hxx"])
+                        let imports = next.reduce(into: Set<String>()) { accum, nextImport in
+                            accum.formUnion(Set(HeaderFileTypes.map { nextImport + "/**/*" + $0 }))
+                        }
+                        let headersDir = GlobNode(include: imports)
+                        accum.formUnion(headersDir.sourcesOnDisk())
+                    }
                 }
-                globResults.forEach { globResult in
-                    // i.e. pod_support/Headers/Public/__POD_NAME__
-                    let from = "../../../../\(globResult)"
-                    let to = String(globResult.split(separator: "/").last!)
-                    shell.symLink(from: from, to: to)
+            }
+
+            // TODO - Handle preserve_paths properly here too.
+
+            if headerMappingsDirs.count > 1 {
+                fatalError("Should not be able to have multiple `header_mappings_dir`s, got \(headerMappingsDirs)")
+            }
+            if var headerMappingsDir = headerMappingsDirs.first {
+                if headerDirNames.count > 1 {
+                    fatalError("Should not be able to have multiple `header_dir`s, got \(headerDirNames)")
+                }
+                // If we have a header mappings dir, don't create <Subspec/...> dirs for each subspec, just expose
+                // the mapping dir
+                if headerMappingsDir == "." {
+                    headerMappingsDir = ""
+                } else if headerMappingsDir.hasPrefix("./") {
+                    headerMappingsDir = String(headerMappingsDir[String.Index.init(encodedOffset: 2)...])
+                } else if !headerMappingsDir.hasSuffix("/") {
+                    headerMappingsDir.append("/")
+                }
+                let baseDir: String;
+                if let headerDir = headerDirNames.first {
+                    baseDir = "\(headerDir)/"
+                } else {
+                    baseDir = ""
+                }
+
+                symlinkHeadersOnce(shell, globResults) { globResult in
+                    if !globResult.starts(with: headerMappingsDir) {
+                        fatalError("Found header `\(globResult)` outside of header mappings dir `\(headerMappingsDir)`!")
+                    }
+                    return PodSupportSystemPublicHeaderDir + baseDir + String(globResult[String.Index.init(encodedOffset: headerMappingsDir.count)...])
+                }
+            } else {
+                // Otherwise create the <Subspec/...> for each subspec.
+                searchPaths.forEach { searchPath in
+                    symlinkHeadersOnce(shell, globResults) { globResult in
+                        PodSupportSystemPublicHeaderDir + searchPath + "/" + String(globResult.split(separator: "/").last!)
+                    }
                 }
             }
         }
@@ -468,6 +516,21 @@ public enum RepoActions {
         )
         let buildFileOut = buildFileSkylarkCompiler.run()
         shell.write(value: buildFileOut, toPath: BazelConstants.buildFileURL())
+    }
+
+    private static func symlinkHeadersOnce(_ shell: ShellContext, _ globResults: Set<String>, _ linkNameFromTarget: (String) -> String) {
+        globResults.forEach { globResult in
+            let linkName = linkNameFromTarget(globResult)
+            // Make sure the directory we're putting the symlink in exists
+            let linkDir = linkName.split(separator: "/").dropLast(1).joined(separator: "/")
+            shell.dir(linkDir)
+
+            // Traverse upward from the symlink to the root of the pod, then go from there to get to the file itself.
+            let parentTraversals = String(repeating: "../", count: linkName.components(separatedBy: "/").count - 1)
+            let linkTarget = parentTraversals + globResult
+
+            shell.symLink(from: linkTarget, to: linkName)
+        }
     }
 
     // Assume the directory structure relative to the pod root
@@ -529,10 +592,15 @@ public enum RepoActions {
             {
                 return shell.command(
                     CommandBinary.sh,
-                    arguments: ["-c", untarTransaction(rootDir: extractDir, fileName: escape(download))]
+                    arguments: ["-c", untarGzipTransaction(rootDir: extractDir, fileName: escape(download))]
+                )
+            } else if lowercasedFileName.hasSuffix("tar.bz2") {
+                return shell.command(
+                    CommandBinary.sh,
+                    arguments: ["-c", untarBzipTransaction(rootDir: extractDir, fileName: escape(download))]
                 )
             }
-            fatalError("Cannot extract files other than .zip, .tar, .tar.gz, or .tgz. Got \(lowercasedFileName)")
+            fatalError("Cannot extract files other than .zip, .tar, .tar.gz, .tar.bz2, or .tgz. Got \(lowercasedFileName)")
         }
 
         assertCommandOutput(extract(), message: "Extraction of \(podName) failed")
@@ -602,8 +670,13 @@ public enum RepoActions {
             + " > /dev/null && " + "rm -rf " + fileName
     }
 
-    static func untarTransaction(rootDir: String, fileName: String) -> String {
+    static func untarGzipTransaction(rootDir: String, fileName: String) -> String {
         return "mkdir -p " + rootDir + " && " + "cd " + rootDir + " && " + "mkdir -p OUT && " + "tar -xzvf " + fileName
+            + " -C OUT > /dev/null 2>&1 && " + "rm -rf " + fileName
+    }
+
+    static func untarBzipTransaction(rootDir: String, fileName: String) -> String {
+        return "mkdir -p " + rootDir + " && " + "cd " + rootDir + " && " + "mkdir -p OUT && " + "tar -xjvf " + fileName
             + " -C OUT > /dev/null 2>&1 && " + "rm -rf " + fileName
     }
 }

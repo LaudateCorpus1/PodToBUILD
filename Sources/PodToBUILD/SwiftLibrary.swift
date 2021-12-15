@@ -6,19 +6,26 @@
 //  Copyright © 2018 Pinterest Inc. All rights reserved.
 //
 
+public enum SwiftLibraryConfigurableKeys: String {
+    case copts
+    case deps
+}
+
 // Represent a swift_library in Bazel
 // https://github.com/bazelbuild/rules_swift/blob/master/doc/rules.md#swift_library
 // Note: Swift support is currently in progress
 // TODO:
 // - XCConfig / compiler flags
-public struct SwiftLibrary: BazelTarget {
+public struct SwiftLibrary: BazelTarget, UserConfigurable {
     public let name: String
     public let sourceFiles: AttrSet<GlobNode>
     public let moduleMap: ModuleMap?
     public let moduleName: String
-    public let deps: AttrSet<[String]>
-    public let copts: AttrSet<[String]>
     public let swiftcInputs: AttrSet<[String]>
+
+    // Modifiable by UserConfigurable
+    public var deps: AttrSet<[String]>
+    public var copts: AttrSet<[String]>
 
     public let isTopLevelTarget: Bool
     public let externalName: String
@@ -141,11 +148,13 @@ public struct SwiftLibrary: BazelTarget {
                 .filter { $0.hasPrefix("//") || $0.hasPrefix("@") }
         }
 
-        let swiftFlags = XCConfigTransformer.defaultTransformer(externalName: externalName, sourceType: .swift)
-            .compilerFlags(for: fallbackSpec)
+        // TODO - Do we really want to use local and global in the same way for both of these?
+        let swiftTransformer = XCConfigTransformer.defaultTransformer(externalName: externalName, sourceType: .swift)
+        let swiftFlags = swiftTransformer.localCompilerFlags(for: fallbackSpec)
+                + swiftTransformer.globalCompilerFlags(for: fallbackSpec)
 
-        let objcFlags = XCConfigTransformer.defaultTransformer(externalName: externalName, sourceType: .objc)
-            .compilerFlags(for: fallbackSpec)
+        let objcTransformer = XCConfigTransformer.defaultTransformer(externalName: externalName, sourceType: .objc)
+        let objcFlags = objcTransformer.localCompilerFlags(for: fallbackSpec) + objcTransformer.globalCompilerFlags(for: fallbackSpec)
 
         let includes = objcFlags.filter { $0.hasPrefix("-I") }
 
@@ -201,7 +210,7 @@ public struct SwiftLibrary: BazelTarget {
             arguments: [
                 .basic(
                     [
-                        ":release": ["-Xcc", "-DPOD_CONFIGURATION_RELEASE=1"],
+                        "@rules_pods//BazelExtensions:release": ["-Xcc", "-DPOD_CONFIGURATION_RELEASE=1"],
                         "//conditions:default": [
                             "-enable-testing", "-DDEBUG", "-Xcc", "-DPOD_CONFIGURATION_DEBUG=1", "-Xcc", "-DDEBUG=1",
                         ],
@@ -220,11 +229,23 @@ public struct SwiftLibrary: BazelTarget {
                 .named(name: "srcs", value: sourceFiles.toSkylark()), .named(name: "deps", value: depsSkylark),
                 .named(name: "data", value: data.toSkylark()), .named(name: "copts", value: coptsSkylark),
                 .named(name: "swiftc_inputs", value: swiftcInputs.toSkylark()),
-                .named(name: "generated_header_name", value: (externalName + "-Swift.h").toSkylark()),
+                .named(name: "generated_header_name", value: (moduleName + "-Swift.h").toSkylark()),
                 .named(name: "features", value: ["swift.no_generated_module_map"].toSkylark()),
                 .named(name: "visibility", value: ["//visibility:public"].toSkylark()),
             ]
         )
+    }
+
+    let usesGlobalCopts: Bool = false
+    mutating func add(configurableKey: String, value: Any) {
+        if let key = SwiftLibraryConfigurableKeys(rawValue: configurableKey) {
+            switch key {
+            case .copts: if let value = value as? String { copts = copts <> AttrSet(basic: [value]) }
+            case .deps: if let value = value as? String { deps = deps <> AttrSet(basic: [value]) }
+            }
+        } else {
+            fatalError("Trying to set unknown user-configurable key: `\(configurableKey)`")
+        }
     }
 }
 

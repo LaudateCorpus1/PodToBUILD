@@ -12,24 +12,6 @@ private var sharedBuildOptions: BuildOptions = BasicBuildOptions.empty
 
 public func GetBuildOptions() -> BuildOptions { return sharedBuildOptions }
 
-/// Config Setting Nodes
-/// Write Build dependent COPTS.
-/// @note We consume this as an expression in ObjCLibrary
-public func makeConfigSettingNodes() -> SkylarkNode {
-    let comment = [
-        "# Add a config setting release for compilation mode", "# Assume that people are using `opt` for release mode",
-        "# see the bazel user manual for more information",
-        "# https://docs.bazel.build/versions/master/be/general.html#config_setting",
-    ]
-    .map { SkylarkNode.skylark($0) }
-    return .lines([
-        .lines(comment), ConfigSetting(name: "release", values: ["compilation_mode": "opt"]).toSkylark(),
-        ConfigSetting(name: "osxCase", values: ["apple_platform_type": "macos"]).toSkylark(),
-        ConfigSetting(name: "tvosCase", values: ["apple_platform_type": "tvos"]).toSkylark(),
-        ConfigSetting(name: "watchosCase", values: ["apple_platform_type": "watchos"]).toSkylark(),
-    ])
-}
-
 public func makeLoadNodes(forConvertibles skylarkConvertibles: [SkylarkConvertible]) -> SkylarkNode {
     let hasSwift = skylarkConvertibles.first(where: { $0 is SwiftLibrary }) != nil
     let hasAppleBundleImport = skylarkConvertibles.first(where: { $0 is AppleBundleImport }) != nil
@@ -72,7 +54,7 @@ public func makePrefixNodes() -> SkylarkNode {
                 .basic(.string(extFile)), .basic(.string("acknowledged_target")), .basic(.string("gen_module_map")),
                 .basic(.string("gen_includes")), .basic(.string("headermap")), .basic(.string("umbrella_header")),
             ]
-        ), makeConfigSettingNodes(),
+        ),
     ]
     return .lines(lineNodes)
 }
@@ -268,7 +250,7 @@ public struct PodBuildFile: SkylarkConvertible {
             sourceType: .objc
         )
 
-        let includes = ObjcLibrary(parentSpecs: parentSpecs, spec: spec).includes
+        let includes = ObjcLibrary(parentSpecs: parentSpecs, spec: spec).systemIncludes
         let hadImportedModuleMap = includes.reduce(into: false) { accum, next in
             // Note: for now we replace these module maps. There is a few issues
             // with accepting use provided module maps with static librares.
@@ -303,6 +285,8 @@ public struct PodBuildFile: SkylarkConvertible {
 
         let objcModuleMap: ModuleMap?
         let hasSwift = packageSourceTypes.contains(.swift)
+        let forceUmbrellaHeader = options.forceUmbrellaHeader.contains(spec.name);
+        let useUmbrellaHeader = hasSwift || forceUmbrellaHeader;
         if hasSwift {
             // When there is swift and Objc
             // - generate a module map
@@ -317,14 +301,17 @@ public struct PodBuildFile: SkylarkConvertible {
             objcModuleMap = ModuleMap(
                 name: clangModuleName + "_module_map",
                 moduleName: clangModuleName,
-                headers: [publicHeaders]
+                headers: [publicHeaders],
+                umbrellaHeader: useUmbrellaHeader ? umbrellaHeader.name : nil
             )
         } else {
             objcModuleMap = nil
         }
 
         let moduleMapTargets: [BazelTarget] =
-            (hasSwift ? [swiftModuleMap, umbrellaHeader] : []) + (objcModuleMap != nil ? [objcModuleMap!] : [])
+            (hasSwift ? [swiftModuleMap] : [])
+                + (useUmbrellaHeader ? [umbrellaHeader] : [] )
+                + (objcModuleMap != nil ? [objcModuleMap!] : [])
         // If there is an extended module map, we need a dependency on the
         // swift lib to generate the -Swift header
         let extraDepNames = extraDeps.map { $0.name }

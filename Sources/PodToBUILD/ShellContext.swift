@@ -133,7 +133,7 @@ class ShellTask: NSObject {
 
         // Run the process, remove the timer when done.
         let exception = tryBlock {
-            process.launch()
+            try! process.run()
             process.waitUntilExit()
         }
 
@@ -244,11 +244,7 @@ public struct SystemShellContext: ShellContext {
     }
 
     public func dir(_ path: String) {
-        let dir = command(CommandBinary.pwd).standardOutputAsString.components(separatedBy: "\n")[0]
-        let relativedir = escape("\(dir)/\(path)")
-        log("DIR\(relativedir)")
-        let status = command(CommandBinary.mkdir, arguments: ["-p", relativedir]).terminationStatus
-        log("DIR STATUS \(status)")
+        try! FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
     }
 
     public func hardLink(from: String, to: String) {

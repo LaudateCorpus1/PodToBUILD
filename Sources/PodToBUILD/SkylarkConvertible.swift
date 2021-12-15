@@ -24,7 +24,7 @@ extension SkylarkNode: ExpressibleByIntegerLiteral { public init(integerLiteral 
 
 extension Int: SkylarkConvertible { public func toSkylark() -> SkylarkNode { return .int(self) } }
 
-extension String: SkylarkConvertible { public func toSkylark() -> SkylarkNode { return .string(self) } }
+extension String: SkylarkConvertible { public func toSkylark() -> SkylarkNode { return .string(self.replacingOccurrences(of: "\n", with: "\\n")) } }
 
 extension Array: SkylarkConvertible {
     public func toSkylark() -> SkylarkNode { return .list(self.map { x in (x as! SkylarkConvertible).toSkylark() }) }

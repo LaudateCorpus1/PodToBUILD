@@ -21,6 +21,7 @@ struct TestTarget: BazelTarget, UserConfigurable {
         return .functionCall(name: "config_setting", arguments: [SkylarkFunctionArgument]())
     }
 
+    let usesGlobalCopts: Bool = true
     mutating func add(configurableKey: String, value: Any) {
         if let key = ObjcLibraryConfigurableKeys(rawValue: configurableKey) {
             switch key {
