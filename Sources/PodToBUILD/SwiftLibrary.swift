@@ -98,7 +98,7 @@ public struct SwiftLibrary: BazelTarget, UserConfigurable {
     init(
         parentSpecs: [PodSpec],
         spec: PodSpec,
-        extraDeps: [String] = [],
+        extraDeps: AttrSet<[String]> = AttrSet.empty,
         isSplitDep: Bool = false,
         moduleMap: ModuleMap? = nil
     ) {
@@ -194,7 +194,7 @@ public struct SwiftLibrary: BazelTarget, UserConfigurable {
                 ])
 
             let moduleMapDep = AttrSet(basic: [":" + moduleMap.name])
-            swiftcInputs = swiftcInputs <> moduleMapDep
+            swiftcInputs = swiftcInputs <> moduleMapDep <> AttrSet(basic: moduleMap.headers)
             deps = deps <> moduleMapDep
 
             if let umbrellaHeader = moduleMap.umbrellaHeader {
@@ -230,6 +230,7 @@ public struct SwiftLibrary: BazelTarget, UserConfigurable {
                 .named(name: "data", value: data.toSkylark()), .named(name: "copts", value: coptsSkylark),
                 .named(name: "swiftc_inputs", value: swiftcInputs.toSkylark()),
                 .named(name: "generated_header_name", value: (moduleName + "-Swift.h").toSkylark()),
+                .named(name: "generates_header", value: 1.toSkylark()),
                 .named(name: "features", value: ["swift.no_generated_module_map"].toSkylark()),
                 .named(name: "visibility", value: ["//visibility:public"].toSkylark()),
             ]

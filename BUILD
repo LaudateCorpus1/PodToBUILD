@@ -82,3 +82,9 @@ macos_unit_test(
     minimum_os_version = "10.13",
 )
 
+load("@xchammer//:BazelExtensions/xcodeproject.bzl", "xcode_project")
+xcode_project(
+    name = "PodToBUILDXcodeProject",
+    targets = [ ":Compiler", ":RepoTools", ],
+    #paths = [ "**" ],
+)

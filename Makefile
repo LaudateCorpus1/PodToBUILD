@@ -9,6 +9,9 @@ build:
 	@ditto bazel-bin/Compiler bin/Compiler
 
 
+xcode:
+	@tools/bazel build :PodToBUILDXcodeProject
+
 # There are a few issues with SwiftPackageManager and incremental builds
 clean:
 	rm -rf .build

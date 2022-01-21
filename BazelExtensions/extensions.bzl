@@ -277,8 +277,7 @@ def _gen_includes_impl(ctx):
     return [
         CcInfo(compilation_context=compilation_context),
         # objc_library deps requires an ObjcProvider
-        # TODO - May need to remove the arg here for Bazel 4+
-        apple_common.new_objc_provider(include=depset(includes))
+        apple_common.new_objc_provider()
     ]
 
 _gen_includes = rule(

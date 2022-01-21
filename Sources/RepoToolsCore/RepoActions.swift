@@ -418,12 +418,11 @@ public enum RepoActions {
         writeDefaultPrefixHeader(shell: shell, buildOptions: buildOptions)
         writeSpecPrefixHeader(shell: shell, podSpec: podSpec)
 
-        // Create a directory structure condusive to <> imports
+        // Create a directory structure conducive to <> imports
         // - Get all of the paths matching wild card imports
         // - Put them into the public header directory
         let buildFile = PodBuildFile.with(podSpec: podSpec, buildOptions: buildOptions)
-
-        // ideally this check should introspec the podspecs value.
+        // ideally this check should introspect the podspec's value.
         if buildOptions.generateHeaderMap == false {
             var globResults: Set<String> = Set()
             var searchPaths: Set<String> = Set()
@@ -443,14 +442,10 @@ public enum RepoActions {
                     }
                 }
                 if let fwImport = convertible as? AppleFrameworkImport {
-                    fwImport.frameworkImports.trivialize(into: &globResults) { accum, next in
-                        let HeaderFileTypes = Set([".h", ".hpp", ".hxx"])
-                        let imports = next.reduce(into: Set<String>()) { accum, nextImport in
-                            accum.formUnion(Set(HeaderFileTypes.map { nextImport + "/**/*" + $0 }))
-                        }
-                        let headersDir = GlobNode(include: imports)
-                        accum.formUnion(headersDir.sourcesOnDisk())
-                    }
+                    let HeaderFileTypes = Set([".h", ".hpp", ".hxx"])
+                    let imports = Set(HeaderFileTypes.map { "\(fwImport.frameworkPath)/**/*\($0)" })
+                    let headersDir = GlobNode(include: imports)
+                    globResults.formUnion(headersDir.sourcesOnDisk())
                 }
             }
 

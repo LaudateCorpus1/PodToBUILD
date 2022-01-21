@@ -101,7 +101,7 @@ struct FrameworkPlatformAndVariant : Hashable {
 // https://github.com/bazelbuild/rules_apple/blob/818e795208ae3ca1cf1501205549d46e6bc88d73/doc/rules-general.md#apple_static_framework_import
 public struct AppleFrameworkImport: BazelTarget {
     public let name: String  // A unique name for this rule.
-    public let frameworkImports: AttrSet<[String]>  // The list of files under a .framework directory which are provided to Objective-C targets that depend on this target.
+    public let frameworkPath: String  // A .framework or .xcframework directory which is provided to Objective-C targets that depend on this target.
 
     public var acknowledged: Bool { return true }
 
@@ -114,8 +114,51 @@ public struct AppleFrameworkImport: BazelTarget {
     // )
     public func toSkylark() -> SkylarkNode {
         let isDynamicFramework = GetBuildOptions().isDynamicFramework
-        let shell = SystemShellContext(trace: GetBuildOptions().trace)
         var additionalFilegroups: Array<SkylarkNode> = [];
+
+        let shell = SystemShellContext(trace: GetBuildOptions().trace);
+        let importsValue: SkylarkNode;
+        if frameworkPath.hasSuffix(".xcframework") {
+            // Parse the plist and generate the globs for the sub-frameworks.
+            let (_, plutilResult) = shell.command("/usr/bin/plutil", arguments: ["-convert", "json", "-o", "-", frameworkPath + "/Info.plist"])
+            let plistJsonAny = try! JSONSerialization.jsonObject(with: plutilResult.standardOutputData, options: [])
+            let plistJson = plistJsonAny as! [String: Any]
+            // TODO - Handle more cases
+            let supportedPlatformAndVariantToBazelCondition = [
+                FrameworkPlatformAndVariant(platform: "ios", variant: "simulator"): "@rules_pods//BazelExtensions:ios_simulator",
+                FrameworkPlatformAndVariant(platform: "ios", variant: nil): "@rules_pods//BazelExtensions:ios_device",
+            ]
+            var selectDict: Dictionary<String, GlobNode> = Dictionary()
+            for lib in (plistJson["AvailableLibraries"] as! [[String: Any]]) {
+                let platformAndVariant = FrameworkPlatformAndVariant(
+                        platform: lib["SupportedPlatform"] as! String,
+                        variant: lib["SupportedPlatformVariant"] as? String
+                )
+                let maybeBazelCondition = supportedPlatformAndVariantToBazelCondition[platformAndVariant]
+                if maybeBazelCondition == nil { continue }
+                // No type narrowing in Swift???
+                let bazelCondition = maybeBazelCondition!
+
+                let libId = lib["LibraryIdentifier"] as! String
+                let libPath = lib["LibraryPath"] as! String
+                selectDict[bazelCondition] = GlobNode(include: [frameworkPath + "/" + libId + "/" + libPath + "/**"])
+            }
+            // Put these in a filegroup so we don't have nested `select`s.
+            let filegroupName = frameworkPath.replacingOccurrences(of: "/", with: "_")
+            let selectCall = SkylarkNode.functionCall(name: "select", arguments: [SkylarkFunctionArgument.basic(selectDict.toSkylark())])
+            additionalFilegroups.append(
+                    SkylarkNode.functionCall(
+                            name: "filegroup",
+                            arguments: [
+                                SkylarkFunctionArgument.named(name: "name", value: filegroupName.toSkylark()),
+                                SkylarkFunctionArgument.named(name: "srcs", value: selectCall)
+                            ]
+                    )
+            )
+            importsValue = [":" + filegroupName].toSkylark();
+        } else {
+            importsValue = GlobNode(include: [frameworkPath + "/**"]).toSkylark();
+        }
 
         let frameworkImportCall = SkylarkNode.functionCall(
             name: isDynamicFramework ? "apple_dynamic_framework_import" : "apple_static_framework_import",
@@ -123,52 +166,9 @@ public struct AppleFrameworkImport: BazelTarget {
                 .named(name: "name", value: .string(name)),
                 .named(
                     name: "framework_imports",
-                    value: frameworkImports.map { frameworkImportsValue -> SkylarkNode in
-                        frameworkImportsValue.map { frameworkImport -> SkylarkNode in
-                            if frameworkImport.hasSuffix(".xcframework") {
-                                // Parse the plist and generate the globs for the sub-frameworks.
-                                let (_, plutilResult) = shell.command("/usr/bin/plutil", arguments: ["-convert", "json", "-o", "-", frameworkImport + "/Info.plist"])
-                                let plistJsonAny = try! JSONSerialization.jsonObject(with: plutilResult.standardOutputData, options: [])
-                                let plistJson = plistJsonAny as! [String: Any]
-                                // TODO - Handle more cases
-                                let supportedPlatformAndVariantToBazelCondition = [
-                                    FrameworkPlatformAndVariant(platform: "ios", variant: "simulator"): "@rules_pods//BazelExtensions:ios_simulator",
-                                    FrameworkPlatformAndVariant(platform: "ios", variant: nil): "@rules_pods//BazelExtensions:ios_device",
-                                ]
-                                var selectDict: Dictionary<String, GlobNode> = Dictionary()
-                                for lib in (plistJson["AvailableLibraries"] as! [[String: Any]]) {
-                                    let platformAndVariant = FrameworkPlatformAndVariant(
-                                            platform: lib["SupportedPlatform"] as! String,
-                                            variant: lib["SupportedPlatformVariant"] as? String
-                                    )
-                                    let maybeBazelCondition = supportedPlatformAndVariantToBazelCondition[platformAndVariant]
-                                    if maybeBazelCondition == nil { continue }
-                                    // No type narrowing in Swift???
-                                    let bazelCondition = maybeBazelCondition!
-
-                                    let libId = lib["LibraryIdentifier"] as! String
-                                    let libPath = lib["LibraryPath"] as! String
-                                    selectDict[bazelCondition] = GlobNode(include: [frameworkImport + "/" + libId + "/" + libPath + "/**"])
-                                }
-                                // Put these in a filegroup so we don't have nested `select`s.
-                                let filegroupName = frameworkImport.replacingOccurrences(of: "/", with: "_")
-                                let selectCall = SkylarkNode.functionCall(name: "select", arguments: [SkylarkFunctionArgument.basic(selectDict.toSkylark())])
-                                additionalFilegroups.append(
-                                        SkylarkNode.functionCall(
-                                                name: "filegroup",
-                                                arguments: [
-                                                    SkylarkFunctionArgument.named(name: "name", value: filegroupName.toSkylark()),
-                                                    SkylarkFunctionArgument.named(name: "srcs", value: selectCall)
-                                                ]
-                                        )
-                                )
-                                return [":" + filegroupName].toSkylark()
-                            } else {
-                                return GlobNode(include: [frameworkImport + "/**"]).toSkylark()
-                            }
-                        }.reduce(SkylarkNode.list([]), { $0 .+. $1 })
-                    }.toSkylark()
-                ), .named(name: "visibility", value: .list(["//visibility:public"])),
+                    value: importsValue
+                ),
+                .named(name: "visibility", value: .list(["//visibility:public"])),
             ])
         )
         return .lines(additionalFilegroups + [frameworkImportCall])
@@ -277,7 +277,7 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
     init(
         parentSpecs: [PodSpec] = [],
         spec: PodSpec,
-        extraDeps: [String] = [],
+        extraDeps: AttrSet<[String]> = AttrSet.empty,
         isSplitDep: Bool = false,
         sourceType: BazelSourceLibType = .objc,
         moduleMap: ModuleMap? = nil
@@ -410,8 +410,8 @@ public struct ObjcLibrary: BazelTarget, UserConfigurable, SourceExcludable {
         let mpDeps = fallbackSpec.attr_inheriting(\.dependencies)
         let mpPodSpecDeps = mpDeps.map { $0.map { getDependencyName(fromPodDepName: $0, podName: podName) } }
 
-        let extraDepNames = extraDeps.map { bazelLabel(fromString: ":\($0)") }
-        deps = AttrSet(basic: extraDepNames) <> mpPodSpecDeps
+        let extraDepNames = extraDeps.map { $0.map { bazelLabel(fromString: ":\($0)") } }
+        deps = extraDepNames <> mpPodSpecDeps
 
         // Adds minimal, non specified Xcode defaults
         let extraCopts: AttrSet<[String]>

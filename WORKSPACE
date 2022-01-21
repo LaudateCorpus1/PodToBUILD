@@ -30,3 +30,8 @@ protobuf_deps()
 load("//third_party:repositories.bzl", "podtobuild_dependencies")
 
 podtobuild_dependencies()
+
+http_archive(
+    name = "xchammer",
+    urls = [ "https://github.com/pinterest/xchammer/releases/download/v3.4.1.6/xchammer.zip" ],
+)

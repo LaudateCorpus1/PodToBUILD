@@ -172,16 +172,22 @@ public struct PodBuildFile: SkylarkConvertible {
             .sorted { $0.name < $1.name }
     }
 
-    private static func vendoredFrameworks(withPodspec spec: PodSpec) -> [BazelTarget] {
+    private static func frameworkNameFromPath(frameworkPath: String) -> String {
+        "\(frameworkPath.replacingOccurrences(of: "/", with: "_"))_VendoredFrameworks"
+    }
+
+    private static func vendoredFrameworks(withPodspec spec: PodSpec) -> (AttrSet<[String]>, [BazelTarget]) {
         let frameworks = spec.attr(\.vendoredFrameworks)
-        return frameworks.isEmpty
-            ? []
-            : [
-                AppleFrameworkImport(
-                    name: "\(spec.moduleName ?? spec.name)_VendoredFrameworks",
-                    frameworkImports: frameworks
-                )
-            ]
+        let frameworkTargets = frameworks.map { $0.map(frameworkNameFromPath) }
+        var frameworkPaths: Set<String> = Set();
+        frameworks.trivialize(into: &frameworkPaths, { $0.formUnion($1) });
+        let frameworkImports = frameworkPaths.map { frameworkPath in
+            AppleFrameworkImport(
+                name: frameworkNameFromPath(frameworkPath: frameworkPath),
+                frameworkPath: frameworkPath
+            )
+        }
+        return (frameworkTargets, frameworkImports)
     }
 
     private static func vendoredLibraries(withPodspec spec: PodSpec) -> [BazelTarget] {
@@ -221,7 +227,7 @@ public struct PodBuildFile: SkylarkConvertible {
     static func makeSourceLibs(
         parentSpecs: [PodSpec],
         spec: PodSpec,
-        extraDeps: [BazelTarget],
+        extraDeps: AttrSet<[String]>,
         isRootSpec: Bool = false
     ) -> [BazelTarget] {
         var sourceLibs: [BazelTarget] = []
@@ -314,15 +320,14 @@ public struct PodBuildFile: SkylarkConvertible {
                 + (objcModuleMap != nil ? [objcModuleMap!] : [])
         // If there is an extended module map, we need a dependency on the
         // swift lib to generate the -Swift header
-        let extraDepNames = extraDeps.map { $0.name }
-        let extraObjcDepNames = extraDepNames + (hasSwift ? [rootName + "_swift"] : [])
+        let extraDepsObjc = extraDeps <> (hasSwift ? AttrSet.init(basic: [rootName + "_swift"]) : AttrSet.empty)
 
         if sourceTypes.count == 0 {
             sourceLibs.append(
                 ObjcLibrary(
                     parentSpecs: parentSpecs,
                     spec: spec,
-                    extraDeps: extraObjcDepNames,
+                    extraDeps: extraDepsObjc,
                     sourceType: .objc,
                     moduleMap: objcModuleMap
                 )
@@ -338,7 +343,7 @@ public struct PodBuildFile: SkylarkConvertible {
                         SwiftLibrary(
                             parentSpecs: parentSpecs,
                             spec: spec,
-                            extraDeps: extraDepNames,
+                            extraDeps: extraDeps,
                             moduleMap: swiftModuleMap
                         )
                     )
@@ -349,7 +354,7 @@ public struct PodBuildFile: SkylarkConvertible {
                     ObjcLibrary(
                         parentSpecs: parentSpecs,
                         spec: spec,
-                        extraDeps: extraObjcDepNames,
+                        extraDeps: extraDepsObjc,
                         sourceType: sourceTypes.first!,
                         moduleMap: objcModuleMap
                     )
@@ -365,7 +370,7 @@ public struct PodBuildFile: SkylarkConvertible {
                 let cppLib = ObjcLibrary(
                     parentSpecs: parentSpecs,
                     spec: spec,
-                    extraDeps: extraDeps.map { $0.name },
+                    extraDeps: extraDeps,
                     isSplitDep: true,
                     sourceType: .cpp,
                     moduleMap: objcModuleMap
@@ -379,7 +384,7 @@ public struct PodBuildFile: SkylarkConvertible {
                 let swiftLib = SwiftLibrary(
                     parentSpecs: parentSpecs,
                     spec: spec,
-                    extraDeps: extraDepNames,
+                    extraDeps: extraDeps,
                     isSplitDep: true,
                     moduleMap: swiftModuleMap
                 )
@@ -391,7 +396,7 @@ public struct PodBuildFile: SkylarkConvertible {
             let rootLib = ObjcLibrary(
                 parentSpecs: parentSpecs,
                 spec: spec,
-                extraDeps: extraObjcDepNames + (splitDeps.map { $0.name }),
+                extraDeps: extraDepsObjc <> AttrSet(basic: splitDeps.map { $0.name }),
                 moduleMap: objcModuleMap
             )
             sourceLibs.append(rootLib)
@@ -402,14 +407,15 @@ public struct PodBuildFile: SkylarkConvertible {
     private static func makeSubspecTargets(parentSpecs: [PodSpec], spec: PodSpec) -> [BazelTarget] {
         let bundles: [BazelTarget] = bundleLibraries(withPodSpec: spec)
         let libraries = vendoredLibraries(withPodspec: spec)
-        let frameworks = vendoredFrameworks(withPodspec: spec)
+        let (frameworkNames, frameworkImports) = vendoredFrameworks(withPodspec: spec)
 
-        let extraDeps: [BazelTarget] = ((libraries as [BazelTarget]) + (frameworks as [BazelTarget]))
+        let libraryNames = libraries.map { $0.name }
+        let extraDeps: AttrSet<[String]> = AttrSet(basic: libraryNames) <> frameworkNames
         let sourceLibs = makeSourceLibs(parentSpecs: parentSpecs, spec: spec, extraDeps: extraDeps)
 
         let subspecTargets = spec.subspecs.flatMap { makeSubspecTargets(parentSpecs: parentSpecs + [spec], spec: $0) }
 
-        return bundles + sourceLibs + libraries + frameworks + subspecTargets
+        return bundles + sourceLibs + libraries + frameworkImports + subspecTargets
     }
 
     public static func makeConvertables(
@@ -426,21 +432,24 @@ public struct PodBuildFile: SkylarkConvertible {
         // Note: We don't currently support having the default being a nested subspec. This also doesn't do anything
         // with subspecs' default subspecs (for nested subspecs).
         let filteredSpecs = podSpec.subspecs.filter { defaultSubspecs.contains($0.name) }
-            .map { ObjcLibrary(parentSpecs: [podSpec], spec: $0, extraDeps: []).name }
+            .map { ObjcLibrary(parentSpecs: [podSpec], spec: $0, extraDeps: AttrSet.empty).name }
             .reduce(Set()) { result, name in result.union([name]) }
 
         let defaultSubspecTargets = subspecTargets.reduce([]) { result, target in
-            return result + (filteredSpecs.contains(target.name) ? [target] : [])
+            result + (filteredSpecs.contains(target.name) ? [target] : [])
         }
 
-        let extraDeps = vendoredFrameworks(withPodspec: podSpec) + vendoredLibraries(withPodspec: podSpec)
+        let libraries = vendoredLibraries(withPodspec: podSpec)
+        let libraryNames = AttrSet(basic: libraries.map { $0.name })
+        let (frameworkNames, frameworkImports) = vendoredFrameworks(withPodspec: podSpec)
 
-        let allRootDeps = ((defaultSubspecTargets.isEmpty ? subspecTargets : defaultSubspecTargets) + extraDeps)
+        let filteredSubspecTargets = ((defaultSubspecTargets.isEmpty ? subspecTargets : defaultSubspecTargets))
             .filter { !($0 is AppleResourceBundle || $0 is AppleBundleImport) }
+        let allRootDeps = AttrSet(basic: filteredSubspecTargets.map { $0.name }) <> libraryNames <> frameworkNames
 
         let sourceLibs = makeSourceLibs(parentSpecs: [], spec: podSpec, extraDeps: allRootDeps)
 
-        var output: [BazelTarget] = sourceLibs + subspecTargets + bundleLibraries(withPodSpec: podSpec) + extraDeps
+        var output: [BazelTarget] = sourceLibs + subspecTargets + bundleLibraries(withPodSpec: podSpec) + libraries + frameworkImports
 
         output = UserConfigurableTransform.transform(convertibles: output, options: buildOptions, podSpec: podSpec)
         output = RedundantCompiledSourceTransform.transform(
